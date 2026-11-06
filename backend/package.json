@@ -1,0 +1,10 @@
+{
+  "name": "ccweb-backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "ccweb 后端：server.mjs 单文件（会话/静态/文件 API/WS 管道）；裸跑 node backend/server.mjs，依赖仅 ws",
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

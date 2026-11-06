@@ -1,14 +1,17 @@
 {
   "name": "ccweb",
   "version": "0.1.0",
+  "private": true,
   "type": "module",
-  "description": "Claude Code 流式 Web 工作台（server.mjs 后端 + web/ 前端；build.sh 一键构建，deploy.sh 本地部署）",
+  "description": "Claude Code 流式 Web 工作台：backend/（Node 单文件服务）+ frontend/（React + Vite）；npm install 一次装完，npm run build / deploy 即用",
+  "workspaces": [
+    "backend",
+    "frontend"
+  ],
   "scripts": {
-    "build": "./build.sh",
-    "deploy": "./deploy.sh",
+    "build": "node scripts/build.mjs",
+    "deploy": "node scripts/deploy.mjs",
+    "dev": "npm run dev -w frontend",
     "test": "node test/e2e-test.mjs http://127.0.0.1:${CCWEB_PORT:-18090}/"
-  },
-  "dependencies": {
-    "ws": "^8.18.0"
   }
 }
