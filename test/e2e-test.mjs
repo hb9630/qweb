@@ -1,6 +1,6 @@
 // 端到端:入口HTML→JS完整性→POST会话→WS hello→等claude回复
 import WebSocket from "ws";
-const base = process.argv[2]; // 如 http://127.0.0.1:8880/app/xxx-8090
+const base = process.argv[2].replace(/\/+$/, ""); // 如 http://127.0.0.1:8880/app/xxx-8090；容忍带尾斜杠（npm script 默认带）
 const j = await fetch(`${base}/`).then(r => r.text());
 const js = j.match(/src="(\.\/assets\/[^"]+)"/)?.[1];
 const u = new URL(js, base + "/").href;

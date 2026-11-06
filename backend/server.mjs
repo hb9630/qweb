@@ -304,7 +304,10 @@ async function listTranscripts() {
 }
 
 const server = createServer(async (req, res) => {
-  const url = new URL(req.url, "http://x");
+  // 畸形 request-target（如 "//"：WHATWG URL 里是空 host，直接抛 Invalid URL）→ 400，
+  // 不能让异常逸出：async handler 里会变 unhandledRejection 被吞，连接就永远吊死不回包
+  let url;
+  try { url = new URL(req.url, "http://x"); } catch { res.writeHead(400); return res.end("bad request"); }
   let pathname = stripBase(url.pathname);
   if (pathname === null) {
     // SPA 入口（整个路径 = base）：尾斜杠是相对资源解析的前提，缺则 301 补上（保留 query）
@@ -728,7 +731,9 @@ function fsSetSubs(ws, dirs) {
 }
 
 server.on("upgrade", (req, sock, head) => {
-  const wsPath = stripBase(new URL(req.url, "http://x").pathname);
+  // 同 createServer：畸形 request-target 直接断开（这里抛错是 uncaughtException，会崩整个进程）
+  let wsPath;
+  try { wsPath = stripBase(new URL(req.url, "http://x").pathname); } catch { sock.destroy(); return; }
   if (wsPath === null) { sock.destroy(); return; }
   // 文件变更通道（全局，不挂会话）
   if (wsPath === "/ws/fs") {
