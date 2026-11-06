@@ -1,0 +1,15 @@
+{
+  "name": "ccweb-server",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "bin": "node build-bin.mjs"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@yao-pkg/pkg": "^6.1.1",
+    "esbuild": "^0.24.0"
+  }
+}

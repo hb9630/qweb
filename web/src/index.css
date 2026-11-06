@@ -1,0 +1,67 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* 变量存裸 oklch 通道值（无 oklch() 包裹），配合 tailwind.config 的
+   oklch(var(--x) / <alpha-value>) 写法，让 /透明度 修饰符真正生效 */
+:root {
+  --radius: 0.5rem;
+  --background: 0.985 0.002 95;
+  --foreground: 0.18 0 0;
+  --card: 1 0 0;
+  --card-foreground: 0.18 0 0;
+  --popover: 1 0 0;
+  --popover-foreground: 0.18 0 0;
+  --primary: 0.72 0.13 60;
+  --primary-foreground: 0.99 0 0;
+  --secondary: 0.955 0.003 95;
+  --secondary-foreground: 0.22 0 0;
+  --muted: 0.955 0.003 95;
+  --muted-foreground: 0.5 0 0;
+  --accent: 0.945 0.005 95;
+  --accent-foreground: 0.2 0 0;
+  --destructive: 0.58 0.22 26;
+  --destructive-foreground: 0.99 0 0;
+  --border: 0.9 0.003 95;
+  --input: 0.9 0.003 95;
+  --ring: 0.65 0.1 60;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: 0.17 0 0;
+    --foreground: 0.96 0 0;
+    --card: 0.215 0 0;
+    --card-foreground: 0.96 0 0;
+    --popover: 0.24 0 0;
+    --popover-foreground: 0.96 0 0;
+    --primary: 0.75 0.14 85;
+    --primary-foreground: 0.18 0 0;
+    --secondary: 0.26 0 0;
+    --secondary-foreground: 0.96 0 0;
+    --muted: 0.26 0 0;
+    --muted-foreground: 0.66 0 0;
+    --accent: 0.28 0 0;
+    --accent-foreground: 0.96 0 0;
+    --destructive: 0.55 0.2 26;
+    --destructive-foreground: 0.96 0 0;
+    --border: 0.3 0 0;
+    --input: 0.3 0 0;
+    --ring: 0.6 0.08 85;
+  }
+}
+
+html, body, #root { height: 100%; }
+
+body {
+  background: oklch(var(--background));
+  color: oklch(var(--foreground));
+  -webkit-font-smoothing: antialiased;
+}
+
+.sd { font-size: 0.9rem; line-height: 1.65; }
+
+/* 防御：清掉页面级默认边框/边距（顶部黑线排查） */
+html, body { margin: 0; border: none; outline: none; }
+html { font-size: 18px; } /* 全局字号基准（默认 18px，Ctrl+=/- 可调，Ctrl+0 重置回此值） */
+#root { border: none; }
