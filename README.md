@@ -34,7 +34,7 @@ seed/             容器形态的种子配置
 cd web && npm install && npm run build
 
 # 裸跑形态：dist 拷到 server 同目录
-cd .. && cp -r web/dist dist
+cd .. && ln -s web/dist dist   # 开发免拷贝（或 cp -r web/dist dist 固化一份）
 node server.mjs                 # http://0.0.0.0:8090
 
 # 开发态前端（vite HMR，代理到 8090）
