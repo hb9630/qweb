@@ -12,12 +12,12 @@ web/              前端源码（React + TypeScript + Vite）
   src/Explorer    左栏文件树（右键菜单、多选、拖放、上传/下载）
   src/ChatPanel   对话区（流式渲染、ctx 窗口、会话切换）
   src/Editor      代码/文本编辑器
-build-sea.mjs     SEA 单文件打包（bundle + dist 嵌入 node 副本）
-ccweb.service     systemd 部署样例（宿主形态 18090）
-push-dist.sh      前端热推：把 web/dist 覆盖到所有跑 ccweb 的容器（免重启）
-e2e-test.mjs      端到端冒烟：入口→会话→WS→claude 回复
-resume-test.mjs   resume 幂等/续聊验证
-seed/             容器形态的种子配置
+  *-test.mjs      playwright UI 冒烟（在 web/ 下跑：node xxx-test.mjs）
+build.sh          一键构建：前端 → 根 dist 链接 → SEA 单文件（--no-sea 可跳过）
+deploy.sh         本地部署：生成 systemd 单元（自适应 user/dir/port）→ 安装重启
+build-sea.mjs     SEA 单文件打包（bundle + dist 嵌入 node 副本；被 build.sh 调用）
+ccweb.service     systemd 单元模板（deploy.sh 的输入）
+test/             服务端测试：e2e-test.mjs（端到端）/ resume-test.mjs（resume 幂等）
 ```
 
 ## 两种发布形态（同一份代码）
@@ -30,18 +30,15 @@ seed/             容器形态的种子配置
 ## 快速开始
 
 ```bash
-# 前端
-cd web && npm install && npm run build
+./build.sh                       # 一键构建：web/dist + build/ccweb（SEA 单文件）
+./build.sh --no-sea              # 只出前端（裸跑形态够用时）
 
-# 裸跑形态：dist 拷到 server 同目录
-cd .. && ln -s web/dist dist   # 开发免拷贝（或 cp -r web/dist dist 固化一份）
-node server.mjs                 # http://0.0.0.0:8090
+node server.mjs                  # 裸跑：http://0.0.0.0:8090（读同目录 dist/）
+./deploy.sh                      # systemd 部署：默认 18090，CCWEB_PORT=xxx ./deploy.sh 改端口
+CCWEB_PORT=18098 ./build/ccweb   # SEA 单文件直跑（分发即拷这一个文件）
 
-# 开发态前端（vite HMR，代理到 8090）
-cd web && npm run dev
-
-# 单文件分发形态
-node build-sea.mjs              # 前置：web/dist 已 build；产物 build/ccweb
+# 前端开发（vite HMR）
+cd web && npm install && npm run dev
 ```
 
 ## 环境变量
@@ -68,13 +65,11 @@ node build-sea.mjs              # 前置：web/dist 已 build；产物 build/ccw
 ## 测试
 
 ```bash
-node e2e-test.mjs http://127.0.0.1:8090/        # 端到端冒烟（需 claude 可用）
-node resume-test.mjs <base> <session_id> <cwd>  # resume 行为验证
-web/*-test.mjs                                   # playwright UI 冒烟（文件树/多选/跟随等）
+node test/e2e-test.mjs http://127.0.0.1:18090/  # 端到端冒烟：入口→会话→WS→claude 回复
+node test/resume-test.mjs <base> <sid> <cwd>    # resume 幂等/续聊验证
+cd web && node multi-select-test.mjs            # playwright UI 冒烟（多选/拖放/跟随等）
 ```
 
 ## systemd（宿主形态）
 
-```bash
-sudo cp ccweb.service /etc/systemd/system/ && sudo systemctl enable --now ccweb
-```
+`./deploy.sh` 一条命令（生成自适应单元 → daemon-reload → restart → 健康检查）；`ccweb.service` 是模板。
