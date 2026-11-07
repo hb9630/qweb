@@ -1,5 +1,5 @@
 import WebSocket from "ws";
-const [base, sid, cwd] = [process.argv[2], process.argv[3], process.argv[4]];
+const [base, sid, cwd] = [process.argv[2]?.replace(/\/+$/, ""), process.argv[3], process.argv[4]];
 const r = await fetch(`${base}/api/sessions`, { method: "POST", headers: {"content-type":"application/json"}, body: JSON.stringify({cwd, resume: sid}) });
 const s = await r.json();
 console.log(`POST → HTTP ${r.status}`, JSON.stringify(s));

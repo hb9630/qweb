@@ -1,0 +1,9 @@
+# crates 走 rsproxy sparse 镜像（本机 GitHub/crates.io 直连不通）
+[source.crates-io]
+replace-with = 'rsproxy-sparse'
+
+[source.rsproxy-sparse]
+registry = "sparse+https://rsproxy.cn/index/"
+
+[net]
+git-fetch-with-cli = true

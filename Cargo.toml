@@ -1,0 +1,9 @@
+[workspace]
+members = ["crates/ccweb-core", "crates/ccweb-server"]
+resolver = "2"
+
+# 发布形态：单文件分发，体积优先
+[profile.release]
+strip = true
+lto = "thin"
+codegen-units = 1

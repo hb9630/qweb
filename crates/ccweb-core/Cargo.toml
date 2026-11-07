@@ -1,0 +1,28 @@
+[package]
+name = "ccweb-core"
+version = "0.1.0"
+edition = "2021"
+description = "ccweb 后端核心：会话管道/fs API/历史回放/静态嵌入（lib，Tauri 壳与 server bin 共用）"
+
+[dependencies]
+axum = { version = "0.8", features = ["ws"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "fs", "process", "io-util", "signal", "sync"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+tokio-util = { version = "0.7", features = ["io"] }
+serde = { version = "1", features = ["derive"] }
+# preserve_order：Map 用 IndexMap 保插入序——与 Node JSON.stringify 字段序逐字节对齐
+# （历史回放透传 transcript 对象、各 API 响应字段序都是契约的一部分）
+serde_json = { version = "1", features = ["preserve_order"] }
+uuid = { version = "1", features = ["v4"] }
+base64 = "0.22"
+notify = "8"
+tar = "0.4"
+flate2 = "1"
+rust-embed = "8"
+futures-util = "0.3"
+percent-encoding = "2"
+# keeperd 反代 + healthz 探针（纯 http 场景为主；rustls 兜底 https 无系统依赖）
+reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

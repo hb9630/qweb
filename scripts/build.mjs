@@ -22,7 +22,7 @@ if (!existsSync(link) || lstatSync(link).isSymbolicLink?.()) {
   console.log("    backend/dist 已存在（空目录），替换为链接");
 }
 
-if (process.env.CCWEB_NO_SEA === "1") { console.log("==> 3/3 跳过 SEA（CCWEB_NO_SEA=1）"); process.exit(0); }
-console.log("==> 3/3 SEA 单文件打包（build/ccweb，发布即拷这一个文件）");
-sh("node scripts/build-sea.mjs");
-console.log("完成：frontend/dist（裸跑）+ build/ccweb（单文件分发）");
+if (process.env.CCWEB_NO_SEA === "1") { console.log("==> 3/3 跳过单文件打包（CCWEB_NO_SEA=1）"); process.exit(0); }
+console.log("==> 3/3 Rust 单文件打包（build/ccweb，前端全量嵌入，发布即拷这一个文件）");
+sh("node scripts/build-rust.mjs");
+console.log("完成：frontend/dist（Node 裸跑形态）+ build/ccweb（Rust 单文件分发）");

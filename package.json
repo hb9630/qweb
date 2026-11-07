@@ -10,6 +10,7 @@
   ],
   "scripts": {
     "build": "node scripts/build.mjs",
+    "build:rust": "node scripts/build-rust.mjs",
     "deploy": "node scripts/deploy.mjs",
     "dev": "npm run dev -w frontend",
     "test": "node test/e2e-test.mjs http://127.0.0.1:${CCWEB_PORT:-18090}/"
