@@ -7,6 +7,24 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 use tokio::sync::mpsc::unbounded_channel;
 
+/// data URL（data:image/png;base64,xxx）→ (mime, base64)。坏条目跳过；
+/// 单图超 8MB 丢弃（stdin 管道与 API 侧双重保险，前端另有 4MB 提示）
+fn parse_images(v: Option<&Value>) -> Vec<(String, String)> {
+    let mut out = vec![];
+    let Some(Value::Array(list)) = v else { return out };
+    for item in list {
+        let Some(s) = item.as_str() else { continue };
+        let Some(rest) = s.strip_prefix("data:") else { continue };
+        let Some((meta, b64)) = rest.split_once(",") else { continue };
+        let mime = meta.strip_suffix(";base64").unwrap_or("image/png").to_string();
+        if !mime.starts_with("image/") || b64.is_empty() || b64.len() > 8 * 1024 * 1024 {
+            continue;
+        }
+        out.push((mime, b64.to_string()));
+    }
+    out
+}
+
 pub async fn handle_session_ws(session: Arc<Session>, socket: WebSocket) {
     let (tx, mut rx) = unbounded_channel::<Message>();
     let (client_id, alive, buf, partial, exit_code) = session.subscribe(tx);
@@ -62,7 +80,15 @@ pub async fn handle_session_ws(session: Arc<Session>, socket: WebSocket) {
                     match v.get("t").and_then(|x| x.as_str()) {
                         Some("user") => {
                             if let Some(text) = v.get("text").and_then(|x| x.as_str()) {
-                                session.send_user(text).await;
+                                session.send_user(text, &parse_images(v.get("images"))).await;
+                            }
+                        }
+                        Some("perm") => {
+                            // 审批决定：{"t":"perm","rid":...,"allow":bool}
+                            let rid = v.get("rid").and_then(|x| x.as_str()).unwrap_or("");
+                            if !rid.is_empty() {
+                                let allow = v.get("allow").and_then(|x| x.as_bool()).unwrap_or(false);
+                                session.perm_respond(rid, allow).await;
                             }
                         }
                         Some("interrupt") => session.interrupt().await,

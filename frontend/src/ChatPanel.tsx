@@ -13,14 +13,15 @@ import { cn } from "@/lib/utils";
 import { BASE } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { CircleStop, FolderOpen, History, Plus, MessageSquare, RefreshCw, Loader2, X, Check, Shrink, Eraser, Zap, ListTodo, FilePen, Sparkles, FastForward } from "lucide-react";
+import { CircleStop, FolderOpen, History, Plus, MessageSquare, RefreshCw, Loader2, X, Check, Shrink, Eraser, Zap, ListTodo, FilePen, Sparkles, FastForward, ShieldAlert, Ban, Paperclip, ArrowUp, Clock } from "lucide-react";
 import type { UIBlock } from "./types";
 
-interface State { blocks: UIBlock[]; busy: boolean; alive: boolean; connected: boolean; model: string; permMode: string; slashCmds: string[]; ctxAbs?: number; queued: number }
+interface State { blocks: UIBlock[]; busy: boolean; alive: boolean; connected: boolean; model: string; permMode: string; slashCmds: string[]; ctxAbs?: number; thinkTokens: number }
 type Action =
   | { t: "cc"; ev: any }
   | { t: "replay"; events: any[] }
-  | { t: "user"; text: string }
+  | { t: "user"; text: string; imgs?: number }
+  | { t: "perm"; rid: string; allow: boolean }
   | { t: "note"; text: string }
   | { t: "clear" }
   | { t: "connected"; v: boolean }
@@ -90,7 +91,10 @@ export function ccReducer(s: State, a: Action): State {
       if (s.blocks.length) return s;
       return a.events.reduce((st: State, ev: any) => ccReducer(st, { t: "cc", ev }), s);
     case "exit": return { ...s, alive: false, busy: false };
-    case "user": return { ...s, blocks: [...s.blocks, { k: "user", text: a.text }], busy: true, queued: s.busy ? s.queued + 1 : s.queued };
+    case "user": return { ...s, blocks: [...s.blocks, { k: "user", text: a.text, ...(a.imgs ? { imgs: a.imgs } : {}) }], busy: true };
+    // 审批决定本地落账（WS 回包照发；重复/迟到回包 CLI 侧自会忽略）
+    case "perm":
+      return { ...s, blocks: s.blocks.map((b) => b.k === "ask" && b.rid === a.rid ? { ...b, done: a.allow ? "allow" as const : "deny" as const } : b) };
     case "note": return { ...s, blocks: [...s.blocks, { k: "note", text: a.text }] };
     case "clear": return { ...s, blocks: [], partial: null };
     case "cc": {
@@ -123,12 +127,29 @@ export function ccReducer(s: State, a: Action): State {
         if (typeof out.mode === "string") return { ...s, permMode: out.mode };
         return s;
       }
+      // 权限询问（--permission-prompt-tool stdio 武装后，"ask" 路径不再静默拒绝）：
+      // 入卡片挂起；tool_use_id 关联后续 tool_result 判定解决态。其他子类型（弹窗类）忽略
+      if (ev.type === "control_request") {
+        const r = ev.request ?? {};
+        if (r.subtype === "can_use_tool") {
+          return { ...s, blocks: [...blocks, {
+            k: "ask", rid: String(ev.request_id ?? ""), tuid: String(r.tool_use_id ?? ""),
+            tool: String(r.tool_name ?? r.display_name ?? "?"),
+            inputJson: JSON.stringify(r.input ?? {}, null, 2),
+          }] };
+        }
+        return s;
+      }
+      // 思考计数（system/estimated_tokens_delta 增量累加；result 归零，replay 时重放累计）
+      if (ev.type === "system" && ev.subtype === "thinking_tokens")
+        return { ...s, thinkTokens: s.thinkTokens + (ev.estimated_tokens_delta ?? 0) };
       if (ev.type === "stream_event") {
         const e = ev.event ?? {};
         // message_start 携带实际服务模型（/model 或 set_model 切换后以此为准）；
         // 同时置 busy：刷新/重连后本地 busy 是 false，但这一轮是别处发起、正在进行——
         // 不置的话输入区不显示进行态，ESC 打断也会被 busy 守卫拦掉
         if (e.type === "message_start" && e.message?.model) s = { ...s, busy: true, model: String(e.message.model) };
+        if (e.type === "message_start") s = { ...s, thinkTokens: 0 };
         if (e.type === "content_block_start") {
           const b = e.content_block;
           if (b?.type === "tool_use") blocks.push({ k: "tool", id: b.id, name: b.name, inputJson: "", live: true });
@@ -154,13 +175,14 @@ export function ccReducer(s: State, a: Action): State {
         // 定稿块插到本轮首个流式块的位置（而非全 push 到末尾）：busy 时排队发出的
         // 用户消息排在流式块之后，filter+末尾 push 会把排队消息顶到定稿前面——
         // 顺序错，且索引 key 连锁重挂（肉眼可见的尾部"跳块重刷"）
+        const sub = ev.parent_tool_use_id != null; // 子代理（Task sidechain）事件缩进弱化
         const first = blocks.findIndex((b: any) => b.live);
         const finals: UIBlock[] = [];
         for (const c of ev.message?.content ?? []) {
-          if (c.type === "text") finals.push({ k: "text", text: c.text });
-          else if (c.type === "thinking") finals.push({ k: "think", text: c.thinking });
+          if (c.type === "text") finals.push({ k: "text", text: c.text, sub });
+          else if (c.type === "thinking") finals.push({ k: "think", text: c.thinking, sub });
           else if (c.type === "tool_use")
-            finals.push({ k: "tool", id: c.id, name: c.name, inputJson: JSON.stringify(c.input, null, 2) ?? "" });
+            finals.push({ k: "tool", id: c.id, name: c.name, inputJson: JSON.stringify(c.input, null, 2) ?? "", sub });
         }
         const kept = blocks.filter((b: any) => !b.live);
         if (first < 0) kept.push(...finals);
@@ -172,7 +194,8 @@ export function ccReducer(s: State, a: Action): State {
         const c0 = ev.message?.content;
         const text = typeof c0 === "string" ? c0
           : Array.isArray(c0) ? c0.filter((x: any) => x.type === "text").map((x: any) => x.text).join("") : "";
-        if (text.trim()) {
+        const nImg = Array.isArray(c0) ? c0.filter((x: any) => x.type === "image").length : 0;
+        if (text.trim() || nImg) {
           // compact 的系统注入：不渲染成用户消息，并重置上下文基线（压缩后骤降是合法的）
           if (text.trim().startsWith("This session is being continued"))
             return { ...s, ctxAbs: 0 };
@@ -182,7 +205,7 @@ export function ccReducer(s: State, a: Action): State {
           if (cn && L && L.k === "user" && L.text.trim().startsWith(cn[1].trim()))
             return { ...s, blocks };
           if (!(L && L.k === "user" && L.text === text.trim())) {
-            blocks.push({ k: "user", text: text.trim() });
+            blocks.push({ k: "user", text: text.trim(), ...(nImg ? { imgs: nImg } : {}) });
           }
           return { ...s, blocks };
         }
@@ -195,6 +218,10 @@ export function ccReducer(s: State, a: Action): State {
                 : Array.isArray(c.content) ? c.content.filter((x: any) => x.type === "text").map((x: any) => x.text).join("\n") : "";
               blocks[i] = { ...b, live: false, result: rc, isError: !!c.is_error };
             }
+            // 权限卡片跟着落定（deny 的 tool_result 是 is_error + 拒绝文案）
+            const ai = blocks.findIndex((b: any) => b.k === "ask" && b.tuid === c.tool_use_id && !b.done);
+            if (ai >= 0)
+              blocks[ai] = { ...blocks[ai], done: c.is_error ? "deny" : "allow" };
           }
         }
         return { ...s, blocks };
@@ -208,7 +235,7 @@ export function ccReducer(s: State, a: Action): State {
         // 单调防抖：上下文只增不减（compact/clear 已各自重置），防网关 usage 偶发波动。
         // ctx% 不在这里定格：分母信息渐进到达（见渲染处派生注释）
         const ctxAbs = Math.max(usedAbs, s.ctxAbs ?? 0);
-        return { ...s, busy: false, queued: 0, model: ev.model ? String(ev.model) : s.model, ctxAbs };
+        return { ...s, busy: false, thinkTokens: 0, model: ev.model ? String(ev.model) : s.model, ctxAbs };
       }
       return s;
     }
@@ -252,31 +279,72 @@ function ThinkBlock({ b }: { b: Extract<UIBlock, { k: "think" }> }) {
 // 本地命令输出（/model 等）带 <local-command-stdout>…</local-command-stdout> 包裹标签，展示时剥掉只留内容
 const stripCmdTags = (t: string) => t.replace(/<\/?local-command-(?:stdout|stderr)>/g, "").trim();
 
-function BlockView({ b }: { b: UIBlock }) {
+// MCP 工具名美化：mcp__server__tool → mcp:server/tool（type 保持原名，仅展示层改名）
+const toolLabel = (n: string) => n.startsWith("mcp__") ? `mcp:${n.slice(5).replace(/__/g, "/")}` : n;
+
+// 权限询问卡片：pending 态可裁决；done 后塌缩成一行结果
+function AskBlock({ b, canAct, onRespond }: {
+  b: Extract<UIBlock, { k: "ask" }>;
+  canAct: boolean;
+  onRespond: (rid: string, allow: boolean) => void;
+}) {
+  if (b.done)
+    return (
+      <div className={cn("my-1 flex items-center gap-1.5 text-xs font-medium",
+        b.done === "allow" ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400")}>
+        {b.done === "allow" ? <Check className="h-3.5 w-3.5 shrink-0" /> : <Ban className="h-3.5 w-3.5 shrink-0" />}
+        已{b.done === "allow" ? "允许" : "拒绝"} · {toolLabel(b.tool)}
+      </div>
+    );
+  return (
+    <div className="my-1.5 w-full rounded-lg border border-amber-500/50 bg-amber-500/10 p-3">
+      <div className="flex items-center gap-1.5 text-xs font-medium text-amber-700 dark:text-amber-300">
+        <ShieldAlert className="h-3.5 w-3.5 shrink-0" />
+        {toolLabel(b.tool)} 请求授权
+      </div>
+      <pre className="mt-1.5 max-h-44 overflow-auto whitespace-pre-wrap break-all rounded bg-muted/50 p-2 font-mono text-[0.6875rem] leading-relaxed text-foreground/80">
+        {b.inputJson}
+      </pre>
+      <div className="mt-2 flex items-center gap-2">
+        <Button size="sm" type="button" disabled={!canAct} onClick={() => onRespond(b.rid, true)}>允许</Button>
+        <Button size="sm" type="button" variant="outline" disabled={!canAct} onClick={() => onRespond(b.rid, false)}>拒绝</Button>
+        <span className="ml-auto shrink-0 text-[0.625rem] text-muted-foreground/70">等待授权期间会话暂停</span>
+      </div>
+    </div>
+  );
+}
+
+function BlockView({ b, canAct, onRespond }: {
+  b: UIBlock;
+  canAct: boolean;
+  onRespond: (rid: string, allow: boolean) => void;
+}) {
   if (b.k === "user")
     return (
       <Message from="user" className="ml-0 justify-start">
         <MessageContent className="rounded-lg border border-primary/30 bg-primary/10 px-3 py-2">
           {stripCmdTags(b.text)}
+          {!!b.imgs && <span className="ml-1.5 shrink-0 align-middle text-[0.625rem] text-muted-foreground" title={`${b.imgs} 张图片`}>📎{b.imgs}</span>}
         </MessageContent>
       </Message>
     );
   if (b.k === "text")
     return (
-      <Message from="assistant" className="justify-start">
+      <Message from="assistant" className={cn("justify-start", b.sub && "pl-6 opacity-75")}>
         <MessageContent>
           <MessageResponse>{stripCmdTags(b.text)}</MessageResponse>
           {b.live && <span className="animate-pulse text-muted-foreground">▍</span>}
         </MessageContent>
       </Message>
     );
-  if (b.k === "think") return <ThinkBlock b={b} />;
+  if (b.k === "think") return <div className={b.sub ? "pl-6 opacity-75" : undefined}><ThinkBlock b={b} /></div>;
+  if (b.k === "ask") return <AskBlock b={b} canAct={canAct} onRespond={onRespond} />;
   if (b.k === "tool") {
     let parsed: any = b.inputJson;
     try { parsed = JSON.parse(b.inputJson || "{}"); } catch {}
     return (
-      <Tool className="my-1 w-full">
-        <ToolHeader state={toolState(b) as any} type={`tool-${b.name}`} />
+      <Tool className={cn("my-1 w-full", b.sub && "ml-6 opacity-80")}>
+        <ToolHeader state={toolState(b) as any} type={`tool-${b.name}`} title={toolLabel(b.name)} />
         <ToolContent>
           <ToolInput input={parsed} />
           {b.result !== undefined && <ToolOutput output={b.result.slice(0, 4000)} />}
@@ -345,7 +413,7 @@ export default function ChatPanel({
     return () => window.removeEventListener("mousedown", h);
   }, [view]);
   // initModel：transcript 最后一次 assistant 的模型——resume/历史态下 init 事件还没来时先顶上
-  const [s, dispatch] = useReducer(ccReducer, { blocks: [], busy: false, alive: live, connected: live, model: initModel ?? "", permMode: "default", slashCmds: [], queued: 0 });
+  const [s, dispatch] = useReducer(ccReducer, { blocks: [], busy: false, alive: live, connected: live, model: initModel ?? "", permMode: "default", slashCmds: [], thinkTokens: 0 });
   // ctx% 渲染时派生、不进 state 定格：分母窗口是渐进到达的（live/合成 result 的
   // modelUsage→localStorage、env 模型清单 hints 都可能晚于首个 result），state 里
   // 算好存住会在早到的 result 上拿 200k 兜底算错（1M 会话虚高 5 倍）且永不更新。
@@ -354,6 +422,29 @@ export default function ChatPanel({
     : Math.round((s.ctxAbs / ctxWindowOf(s.model || "", null, null)) * 100);
   const wsRef = useRef<WebSocket | null>(null);
   const [input, setInput] = useState("");
+  // 插话队列：busy 时发送不进消息流、不写 stdin——钉在输入框上方，
+  // 轮末（result 到达）自动整队送出，或用户 ↑ 立即送出 / ✕ 删除。
+  // 只在本客户端持有（UI 态，不跨端同步；刷新丢失可接受）
+  interface SteerItem { id: number; text: string; urls: string[] }
+  const [steerQ, setSteerQ] = useState<SteerItem[]>([]);
+  const steerQRef = useRef(steerQ);
+  steerQRef.current = steerQ;
+  const steerSeq = useRef(0);
+  // 待发图片（data URL，粘贴/拖拽/选择三种入口；后端解析 data: 前缀转 base64 块）
+  const [imgs, setImgs] = useState<{ url: string; name: string }[]>([]);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const addFiles = useCallback((files: Iterable<File>) => {
+    for (const f of files) {
+      if (!f.type.startsWith("image/")) continue;
+      if (f.size > 4 * 1024 * 1024) {
+        dispatch({ t: "note", text: `图片 ${f.name} 超 4MB，已跳过` });
+        continue;
+      }
+      const r = new FileReader();
+      r.onload = () => setImgs((p) => [...p, { url: String(r.result), name: f.name }]);
+      r.readAsDataURL(f);
+    }
+  }, []);
   // ctrl 请求在途中（set_model 需后端连代理校验，数秒）：chip 上转圈，control_response 到达即清
   const [ctrlPend, setCtrlPend] = useState<null | "mode" | "model">(null);
   useEffect(() => {
@@ -393,6 +484,14 @@ export default function ChatPanel({
           const msg = JSON.parse(m.data);
           if (msg.t === "cc") {
             if (msg.ev?.type === "control_response") setCtrlPend(null); // 回包到达，停转圈
+            // 轮末送出插话队列（CLI 对轮后新消息照常处理；本地块与 CLI 回显去重见 reducer）
+            if (msg.ev?.type === "result" && steerQRef.current.length && ws.readyState === 1) {
+              for (const it of steerQRef.current) {
+                ws.send(JSON.stringify({ t: "user", text: it.text, images: it.urls }));
+                dispatch({ t: "user", text: it.text, ...(it.urls.length ? { imgs: it.urls.length } : {}) });
+              }
+              setSteerQ([]);
+            }
             dispatch({ t: "cc", ev: msg.ev });
           }
           else if (msg.t === "exit") { dead = true; dispatch({ t: "exit" }); }
@@ -405,16 +504,42 @@ export default function ChatPanel({
   }, [sid]); // pendingText 每个 sid 只消费一次（原地升级时随 effect 重跑再发）
 
   const send = useCallback(({ text }: { text: string }) => {
-    if (!text.trim()) return;
+    if (!text.trim() && imgs.length === 0) return;
     // 历史回放态：先恢复进程（--resume），App 升级为 live 后再发
     if (!live) { onResume?.(text); return; }
-    // busy 时不拦：CLI 实测排队（当前轮结束后送达），与终端 steer 行为一致
     if (!s.alive) { dispatch({ t: "note", text: "进程已退出，请新建会话" }); return; }
     if (!s.connected) { dispatch({ t: "note", text: "连接断开（自动重连中），稍候再发" }); return; }
-    wsRef.current?.send(JSON.stringify({ t: "user", text: text.trim() }));
-    dispatch({ t: "user", text: text.trim() });
+    const t = text.trim();
+    const urls = imgs.map((i) => i.url);
+    // busy 中 = 插话：钉在输入框上方排队（轮末自动送出），不进消息流
+    if (s.busy) {
+      setSteerQ((q) => [...q, { id: ++steerSeq.current, text: t || "（图片）", urls }]);
+      setInput("");
+      setImgs([]);
+      return;
+    }
+    wsRef.current?.send(JSON.stringify({ t: "user", text: t, images: urls }));
+    dispatch({ t: "user", text: t || "（图片）", ...(urls.length ? { imgs: urls.length } : {}) });
     setInput("");
-  }, [s.connected, s.alive]);
+    setImgs([]);
+  }, [s.connected, s.alive, s.busy, imgs]);
+
+  // 队列单条"立即送出"：写 stdin（CLI 排队）+ 本地上屏（用户主动送上去）
+  const sendSteerNow = useCallback((id: number) => {
+    const it = steerQRef.current.find((x) => x.id === id);
+    if (!it) return;
+    if (wsRef.current?.readyState !== 1) { dispatch({ t: "note", text: "连接未就绪，稍后再送" }); return; }
+    wsRef.current.send(JSON.stringify({ t: "user", text: it.text, images: it.urls }));
+    dispatch({ t: "user", text: it.text, ...(it.urls.length ? { imgs: it.urls.length } : {}) });
+    setSteerQ((q) => q.filter((x) => x.id !== id));
+  }, []);
+
+  // 审批裁决：WS 下发 + 本地落账（重复/迟到回包 CLI 侧自会忽略）
+  const respondPerm = useCallback((rid: string, allow: boolean) => {
+    if (wsRef.current?.readyState === 1) wsRef.current.send(JSON.stringify({ t: "perm", rid, allow }));
+    else dispatch({ t: "note", text: "连接未就绪，决定未送达" });
+    dispatch({ t: "perm", rid, allow });
+  }, []);
 
   // control_request 通道（set_permission_mode / set_model / …）；未连接时显式提示而非静默丢弃
   const sendCtrl = useCallback((sub: string, args: Record<string, unknown> = {}) => {
@@ -553,12 +678,15 @@ export default function ChatPanel({
       )}
       <Conversation className="flex-1">
         <ConversationContent className="mx-auto w-full max-w-5xl px-5 pt-6 pb-2">
-          {s.blocks.map((b, i) => <BlockView key={i} b={b} />)}
+          {s.blocks.map((b, i) => <BlockView key={i} b={b} canAct={live && s.connected && s.alive} onRespond={respondPerm} />)}
           {live && s.busy && (
             <div className="flex items-center gap-2 px-1 py-2 text-xs text-muted-foreground">
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              {s.blocks.some((b: any) => b.live) ? "回复中…" : "思考中…"}
-              {s.queued > 0 && <span className="text-amber-600 dark:text-amber-400">已排队 {s.queued} 条（当前轮结束后送达）</span>}
+              {s.blocks.some((b: any) => b.k === "ask" && !b.done)
+                ? "等待授权…"
+                : s.blocks.some((b: any) => b.live)
+                  ? "回复中…"
+                  : s.thinkTokens > 0 ? `思考中… ~${s.thinkTokens} tokens` : "思考中…"}
             </div>
           )}
         </ConversationContent>
@@ -672,12 +800,59 @@ export default function ChatPanel({
               </div>
             </div>
           )}
-          <PromptInput value={input} onValueChange={onInput} onSubmit={send} className="bg-card">
+          {/* 待发图片缩略图 + 插话队列（都钉在输入框上方，不进消息流） */}
+          {(imgs.length > 0 || steerQ.length > 0) && (
+            <div className="mb-1.5 flex flex-col gap-1.5">
+              {imgs.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {imgs.map((im, i) => (
+                    <div key={i} className="relative">
+                      <img src={im.url} alt={im.name} title={im.name}
+                        className="h-12 w-12 rounded-md border border-border object-cover" />
+                      <button
+                        className="absolute -right-1.5 -top-1.5 rounded-full border border-border bg-background p-0.5 text-muted-foreground hover:text-foreground"
+                        title={`移除 ${im.name}`} onClick={() => setImgs((p) => p.filter((_, j) => j !== i))}>
+                        <X className="h-2.5 w-2.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {steerQ.map((it) => (
+                <div key={it.id}
+                  className="flex items-center gap-2 rounded-lg border border-dashed border-amber-500/50 bg-amber-500/5 px-2.5 py-1.5 text-xs">
+                  <Clock className="h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
+                  <span className="min-w-0 flex-1 truncate text-foreground/85" title={it.text}>{it.text}</span>
+                  {!!it.urls.length && <span className="shrink-0 text-[0.625rem] text-muted-foreground">📎{it.urls.length}</span>}
+                  <button className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+                    title="立即送出（交给 CLI 队列并上屏）" onClick={() => sendSteerNow(it.id)}>
+                    <ArrowUp className="h-3.5 w-3.5" />
+                  </button>
+                  <button className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+                    title="删除（不发送）" onClick={() => setSteerQ((q) => q.filter((x) => x.id !== it.id))}>
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              ))}
+              {steerQ.length > 0 && (
+                <div className="px-1 text-[0.625rem] text-muted-foreground/70">
+                  插话排队中——本轮结束后自动送出；↑ 立即送出 · ✕ 删除
+                </div>
+              )}
+            </div>
+          )}
+          <PromptInput value={input} onValueChange={onInput} onSubmit={send} className="bg-card"
+            onDragOver={(e: any) => e.preventDefault()}
+            onDrop={(e: any) => { e.preventDefault(); const fs = e.dataTransfer?.files; if (fs?.length) addFiles(fs); }}>
             <PromptInputBody>
               <PromptInputTextarea
                 placeholder={live
-                  ? (s.alive ? "给 Claude 发消息…（/ 命令联想 · Enter 发送 · ESC 打断）" : "进程已退出，请新建会话")
+                  ? (s.alive ? "给 Claude 发消息…（/ 命令联想 · Enter 发送 · ESC 打断 · 可粘贴/拖入图片）" : "进程已退出，请新建会话")
                   : "历史会话 · 输入即恢复上下文继续对话（Enter 发送）"}
+                onPaste={(e: any) => {
+                  const fs = e.clipboardData?.files;
+                  if (fs?.length) { e.preventDefault(); addFiles(fs); }
+                }}
                 onKeyDown={(e) => {
                   if (!slashOpen || !slashList) return;
                   if (e.key === "ArrowDown") { e.preventDefault(); setSlashIdx((slashIdxC + 1) % slashList.length); }
@@ -689,6 +864,17 @@ export default function ChatPanel({
             </PromptInputBody>
             <PromptInputFooter>
               <PromptInputTools>
+                {/* 图片附件：选择文件（粘贴/拖拽入口在输入框上；只对 live 会话开放） */}
+                <input ref={fileRef} type="file" accept="image/*" multiple className="hidden"
+                  onChange={(e) => { addFiles(e.target.files ?? []); e.target.value = ""; }} />
+                <button type="button"
+                  className={cn("flex items-center gap-1 rounded-full border border-border/80 bg-secondary/70 px-2 py-0.5 text-[0.625rem] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground",
+                    imgs.length > 0 && "border-primary/40 text-primary")}
+                  title={imgs.length ? `已选 ${imgs.length} 张图片（输入框上方可移除）` : "附加图片（也可直接粘贴/拖入）"}
+                  disabled={!live}
+                  onClick={() => fileRef.current?.click()}>
+                  <Paperclip className="h-3 w-3" />{imgs.length > 0 ? `图片 ×${imgs.length}` : "图片"}
+                </button>
                 {/* ctx 占用徽章：中性底，仅数字按阈值着色（纯展示；压缩/清除走上方工具条）。
                     常驻不隐藏：无数据（首轮 result 未到）按 0% 展示并占住位置，避免出现时 footer 抖动 */}
                 <span

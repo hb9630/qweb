@@ -27,6 +27,9 @@ struct Inner {
     last_active: u64,
     clients: HashMap<u64, UnboundedSender<Message>>,
     exit_code: Option<Option<i32>>, // Some(code) = 已退出（进程死后订阅的客户端补发 exit 帧）
+    // 挂起的权限询问：can_use_tool control_request 的 request_id → request.input。
+    // 回 allow 时要带 updatedInput（SDK 同款语义：原 input 原样返回，2.1.212 实测）
+    pending_perms: HashMap<String, Value>,
 }
 
 pub struct Session {
@@ -54,6 +57,7 @@ impl Session {
                 last_active: now_ms(),
                 clients: HashMap::new(),
                 exit_code: None,
+                pending_perms: HashMap::new(),
             }),
             stdin: tokio::sync::Mutex::new(None),
             ctxwin,
@@ -72,6 +76,10 @@ impl Session {
             "stream-json".into(),
             "--include-partial-messages".into(),
             "--verbose".into(),
+            // 权限询问走 control_request（can_use_tool）而非 headless 静默拒绝；
+            // "stdio" 为带内通道值（SDK canUseTool 同款，CLI ≥2.1 实测）
+            "--permission-prompt-tool".into(),
+            "stdio".into(),
         ]);
         {
             let sid = self.inner.lock().unwrap().claude_sid.clone();
@@ -175,6 +183,17 @@ impl Session {
                     inner.claude_sid = Some(sid.to_string()); // 官方会话 ID（transcript 文件名，resume 用）
                 }
             }
+            // 权限询问挂起登记（回 allow 要带原 input 作 updatedInput）；事件本体照常入 buf 回放
+            if ev.get("type").and_then(|v| v.as_str()) == Some("control_request")
+                && ev.pointer("/request/subtype").and_then(|v| v.as_str()) == Some("can_use_tool")
+            {
+                if let (Some(rid), Some(input)) = (
+                    ev.get("request_id").and_then(|v| v.as_str()),
+                    ev.pointer("/request/input").cloned(),
+                ) {
+                    inner.pending_perms.insert(rid.to_string(), input);
+                }
+            }
             if ev.get("type").and_then(|v| v.as_str()) == Some("stream_event") {
                 // 增量不进 buf，只推流；记录累积以支持重连续播
                 let d = ev
@@ -254,11 +273,35 @@ impl Session {
         })
     }
 
-    /// stdin 写入（官方 SDK 格式；持久化由 claude transcript 完成）
-    pub async fn send_user(self: &Arc<Self>, text: &str) {
+    /// stdin 写入（官方 SDK 格式；持久化由 claude transcript 完成）。
+    /// 图片走 source.base64 块（data+media_type / mimeType 形态 2.1.212 实测均拒收）
+    pub async fn send_user(self: &Arc<Self>, text: &str, images: &[(String, String)]) {
+        let mut content = vec![json!({ "type": "text", "text": text })];
+        for (mime, b64) in images {
+            content.push(json!({
+                "type": "image",
+                "source": { "type": "base64", "media_type": mime, "data": b64 }
+            }));
+        }
         let msg = json!({
             "type": "user", "session_id": "",
-            "message": { "role": "user", "content": [{ "type": "text", "text": text }] },
+            "message": { "role": "user", "content": content },
+        });
+        self.write_stdin(&msg).await;
+    }
+
+    /// 审批回包。wire 格式（CLI 2.1.212 逐字实测）：request_id 嵌在 response 内；
+    /// allow 回带 updatedInput=原 input（SDK 同款），deny 的 message 原样进 tool_result
+    pub async fn perm_respond(self: &Arc<Self>, request_id: &str, allow: bool) {
+        let input = self.inner.lock().unwrap().pending_perms.remove(request_id);
+        let decision = match (allow, input) {
+            (true, Some(input)) => json!({ "behavior": "allow", "updatedInput": input }),
+            (true, None) => json!({ "behavior": "allow" }), // 未知/重复回包：尽力而为，CLI 侧自会去重
+            (false, _) => json!({ "behavior": "deny", "message": "User denied via ccweb" }),
+        };
+        let msg = json!({
+            "type": "control_response",
+            "response": { "subtype": "success", "request_id": request_id, "response": decision },
         });
         self.write_stdin(&msg).await;
     }

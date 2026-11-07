@@ -92,6 +92,24 @@ CCWEB_AUTH=password CCWEB_PASSWORD=xxx ./ccweb   # env 形态（systemd unit 传
 - resume 幂等：同一官方会话已有活进程时重复 POST 返回既有会话，不重复 spawn
 - 工作目录 = 左栏目录树右键"设为工作目录"（唯一入口）；换目录 = 新会话（cwd 在 spawn 时固化）
 
+## 权限审批 / 图片附件 / 插话
+
+spawn 恒带 `--permission-prompt-tool stdio`（CLI ≥2.1，SDK canUseTool 同款带内通道）：
+
+- **审批**：无放行清单匹配的工具调用不再被 headless 静默拒绝，而是以 `can_use_tool`
+  control_request 到达前端渲染成琥珀色授权卡片（工具名 + 入参 + 允许/拒绝）；决定经
+  `{"t":"perm","rid":..., "allow":...}` 回写 stdin，deny 文案会作为 tool_result 反馈给模型。
+  询问帧入回放缓冲——刷新页面后未决卡片自动恢复。allow 回包按协议带原 input 作
+  `updatedInput`（2.1.212 逐字实测的 wire 格式）。
+- **图片**：输入框粘贴 / 拖拽 / 回形针按钮三种入口（≤4MB/张），走 stdin
+  `source.base64` content block（`data+media_type`/`mimeType` 形态 CLI 均拒收），
+  用户气泡带 📎 徽章，历史回放同样可见。
+- **插话（steering）**：回复进行中发送的消息**不进消息流**——钉在输入框上方的
+  排队条里（可 ✕ 删除、可 ↑ 立即送出），本轮 `result` 到达时整队自动送出上屏，
+  与 CLI 轮末送达的时机一致。
+- 渲染：子代理事件（`parent_tool_use_id` 非空）缩进弱化；思考 token 增量计数
+  （"思考中… ~N tokens"）；MCP 工具名 `mcp__srv__tool` 美化为 `mcp:srv/tool`。
+
 ## 测试
 
 ```bash
