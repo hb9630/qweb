@@ -689,20 +689,19 @@ export default function ChatPanel({
             </PromptInputBody>
             <PromptInputFooter>
               <PromptInputTools>
-                {/* ctx 占用徽章：中性底，仅数字按阈值着色（纯展示；压缩/清除走上方工具条） */}
-                {ctxPct != null && (
-                  <span
-                    className="flex items-center gap-1 rounded-full border border-border/80 bg-secondary/70 px-2 py-0.5 font-mono text-[0.625rem] tabular-nums text-muted-foreground"
-                    title="上下文占用（压缩/清屏见上方工具条）">
-                    ctx <span className={cn(
-                      ctxPct < 60
-                        ? "text-emerald-600 dark:text-emerald-400"
-                        : ctxPct < 85
-                          ? "text-amber-600 dark:text-amber-400"
-                          : "text-red-600 dark:text-red-400",
-                    )}>{ctxPct}%</span>
-                  </span>
-                )}
+                {/* ctx 占用徽章：中性底，仅数字按阈值着色（纯展示；压缩/清除走上方工具条）。
+                    常驻不隐藏：无数据（首轮 result 未到）按 0% 展示并占住位置，避免出现时 footer 抖动 */}
+                <span
+                  className="flex items-center gap-1 rounded-full border border-border/80 bg-secondary/70 px-2 py-0.5 font-mono text-[0.625rem] tabular-nums text-muted-foreground"
+                  title="上下文占用（压缩/清屏见上方工具条）">
+                  ctx <span className={cn(
+                    ctxPct == null || ctxPct < 60
+                      ? "text-emerald-600 dark:text-emerald-400"
+                      : ctxPct < 85
+                        ? "text-amber-600 dark:text-amber-400"
+                        : "text-red-600 dark:text-red-400",
+                  )}>{ctxPct ?? 0}%</span>
+                </span>
                 {/* 模式 + 模型 + 连接态（cwd 见标题栏左角） */}
                 {/* 模式 badge：default 中性灰；非默认模式主色系提醒（一眼看出在特殊模式） */}
                 <button type="button"
