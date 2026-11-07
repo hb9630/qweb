@@ -1,5 +1,4 @@
-// 端到端:入口HTML→JS完整性→POST会话→WS hello→等claude回复
-import WebSocket from "ws";
+// 端到端:入口HTML→JS完整性→POST会话→WS hello→等claude回复（原生 WebSocket，零依赖）
 const base = process.argv[2].replace(/\/+$/, ""); // 如 http://127.0.0.1:8880/app/xxx-8090；容忍带尾斜杠（npm script 默认带）
 const j = await fetch(`${base}/`).then(r => r.text());
 const js = j.match(/src="(\.\/assets\/[^"]+)"/)?.[1];
@@ -10,7 +9,13 @@ const s = await fetch(`${base}/api/sessions`, { method: "POST", headers: {"conte
 console.log(`✓ 会话创建 id=${s.id}`);
 const b = new URL(base);
 const ws = new WebSocket(b.protocol.replace(/^http/, "ws") + "//" + b.host + b.pathname.replace(/\/$/, "") + `/ws/${s.id}`);
-const done = new Promise((ok, no) => { const t = setTimeout(() => no(new Error("60s 无回复")), 60000); ws.on("message", raw => { const m = JSON.parse(raw); if (m.t==="cc" && m.ev?.type==="stream_event" && m.ev.event?.delta?.text) { console.log("✓ claude 回复中:", JSON.stringify(m.ev.event.delta.text.slice(0,60))); clearTimeout(t); ok(); } if (m.t==="exit") { no(new Error("claude 退出 code="+m.code)); } }); });
-await new Promise(r => ws.on("open", r));
+const done = new Promise((ok, no) => {
+  const t = setTimeout(() => no(new Error("60s 无回复")), 60000);
+  ws.onmessage = (e) => { const m = JSON.parse(e.data);
+    if (m.t==="cc" && m.ev?.type==="stream_event" && m.ev.event?.delta?.text) { console.log("✓ claude 回复中:", JSON.stringify(m.ev.event.delta.text.slice(0,60))); clearTimeout(t); ok(); }
+    if (m.t==="exit") { no(new Error("claude 退出 code="+m.code)); } };
+  ws.onerror = () => no(new Error("WS 连接错误"));
+});
+await new Promise(r => ws.onopen = r);
 ws.send(JSON.stringify({t:"user", text:"回复ok两个字母即可"}));
 await done; ws.close(); console.log("✓ 端到端全通\n");

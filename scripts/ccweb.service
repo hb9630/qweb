@@ -1,5 +1,5 @@
 # ccweb systemd 单元模板（deploy.mjs 生成时替换 User/HOME/CCWEB_PORT；其余保持）
-# 服务跑 /usr/local/ccweb 安装树（npm run deploy 组装），与开发目录解耦
+# 服务跑 /usr/local/ccweb/ccweb 自包含单文件（前端已嵌入），与开发目录解耦
 [Unit]
 Description=ccweb（Claude Code 流式 Web 工作台）
 After=network-online.target
@@ -10,7 +10,7 @@ User=huangbin
 Environment=HOME=/home/huangbin
 Environment=CCWEB_PORT=18090
 WorkingDirectory=/usr/local/ccweb
-ExecStart=/usr/bin/node /usr/local/ccweb/server.mjs
+ExecStart=/usr/local/ccweb/ccweb
 Restart=always
 RestartSec=3
 

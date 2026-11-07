@@ -1,8 +1,8 @@
 # ccweb
 
-Claude Code 的流式 Web 工作台：对话（stream-json 双向管道）+ 文件树（右键全功能文件管理）+ 编辑器 + 终端。Rust 后端（axum/tokio 单二进制，前端全量嵌入）+ React 前端，`npm install` + `npm run build` 即出可分发单文件。
+Claude Code 的流式 Web 工作台：对话（stream-json 双向管道）+ 文件树（右键全功能文件管理）+ 编辑器 + 终端。Rust 后端（axum/tokio 单二进制，前端全量嵌入）+ React 前端，frontend `npm install` + `npm run build` 即出可分发单文件。
 
-> 2026-11-06 从 `keeper/deploy/ccweb` 拆出独立仓库；2026-11-07 后端移植 Rust（原 `backend/server.mjs` 留树作行为对照基准，API/WS 契约逐字节兼容）。
+> 2026-11-06 从 `keeper/deploy/ccweb` 拆出独立仓库；2026-11-07 后端移植 Rust（Node 版已移除，API/WS 契约经双后端逐字节 diff 验证后切换）。
 
 ## 目录结构
 
@@ -10,14 +10,13 @@ Claude Code 的流式 Web 工作台：对话（stream-json 双向管道）+ 文�
 crates/             Rust 后端（cargo workspace）
   ccweb-core/       业务核心 lib：会话管道/fs API/历史回放/静态嵌入（Tauri 壳将来直接依赖）
   ccweb-server/     薄 bin：bind/信号/启动日志
-backend/            Node 旧后端（对照基准，退役中；e2e 双后端 diff 验证兼容性用）
-frontend/           前端（React + TypeScript + Vite）
+frontend/           前端（React + TypeScript + Vite，依赖自持——node_modules 在 frontend/ 内）
   src/Explorer      左栏文件树（右键菜单、多选、拖放、上传/下载）
   src/ChatPanel     对话区（流式渲染、ctx 窗口、会话切换）
   src/Editor        代码/文本编辑器
   *-test.mjs        playwright UI 冒烟（node xxx-test.mjs，默认连 18090）
 scripts/            构建与部署
-  build.mjs         npm run build：前端 → backend/dist 链接 → Rust 单文件
+  build.mjs         npm run build：前端 → Rust 单文件（build/ccweb）
   build-rust.mjs    cargo release 构建 → build/ccweb
   deploy.mjs        npm run deploy：组装 /usr/local/ccweb 安装树 + systemd
   ccweb.service     systemd 单元模板（deploy.mjs 的输入）
@@ -28,12 +27,11 @@ build/              构建产物（git 忽略）：ccweb 单文件（~19MB）
 ## 快速开始
 
 ```bash
-npm install            # 前端依赖（Rust 侧经 .cargo/config.toml 走 rsproxy 镜像）
+cd frontend && npm install   # 前端依赖（独立安装；Rust 侧经 .cargo/config.toml 走 rsproxy 镜像）
 npm run build          # 全量构建：frontend/dist + build/ccweb（Rust 单文件，~19MB）
-CCWEB_NO_SEA=1 npm run build   # 只出前端（裸跑/开发够用）
+CCWEB_NO_RUST=1 npm run build   # 只出前端（开发够用）
 
 cargo run -p ccweb-server      # Rust 后端开发跑（debug 态 dist 从磁盘读，前端重建无需重编）
-node backend/server.mjs        # Node 旧后端对照：http://0.0.0.0:8090
 npm run dev                    # 前端开发（vite HMR）
 
 npm run deploy         # 正式部署（见下）
@@ -43,10 +41,10 @@ npm run deploy         # 正式部署（见下）
 
 按目标环境取用，三种形态同一份代码：
 
-- **裸跑**：`cargo run` / `target/release/ccweb-server`——任何装了 Rust 或构建机的机器
+- **裸跑**：`cargo run` / `target/release/ccweb-server`——开发态（dist 读磁盘）
 - **单文件**：`build/ccweb`（Rust 二进制 + 前端全量嵌入，~19MB；原 SEA 形态 137MB 的 1/7，常驻内存 ~8MB vs Node ~52MB）——拷到任何装了 claude 的机器，任意目录 `./ccweb` 即跑，无任何运行时依赖
 - **npm run deploy**：假如使用 systemd 的话（Linux 服务器常态），一条命令完成正式安装——开发目录只是源码，服务装在系统位置、与源码解耦，升级 = `npm run build && npm run deploy`：
-  1. 组装自包含安装树 **`/usr/local/ccweb`**（server.mjs + dist 实体 + ws 依赖）
+  1. 安装 **`/usr/local/ccweb/ccweb`**（自包含单文件；Linux 目标需 linux 构建产物）
   2. 生成 systemd 单元（自适应 User/HOME/端口，默认 **18090**；`CCWEB_PORT=xxx npm run deploy` 改端口）→ 安装重启
   3. 健康检查通过后输出上线确认
 
@@ -68,7 +66,7 @@ npm run deploy         # 正式部署（见下）
 | `CCWEB_HOME` | `$HOME` | 工作区根（树根/会话 cwd 钳制边界） |
 | `CCWEB_SINGLE` | – | `=1` 发布单会话形态：至多一个活会话，前端隐藏会话切换 |
 | `CCWEB_CLAUDE` | PATH 探测 | claude 可执行文件路径覆盖 |
-| `CCWEB_NO_SEA` | – | `=1` 时 npm run build 跳过 SEA 打包 |
+| `CCWEB_NO_RUST` | – | `=1` 时 npm run build 跳过 Rust 单文件打包 |
 
 ## 路由：零配置 base_path
 

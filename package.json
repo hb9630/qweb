@@ -3,16 +3,12 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Claude Code 流式 Web 工作台：backend/（Node 单文件服务）+ frontend/（React + Vite）；npm install 一次装完，npm run build / deploy 即用",
-  "workspaces": [
-    "backend",
-    "frontend"
-  ],
+  "description": "Claude Code 流式 Web 工作台：Rust 后端（crates/，axum+tokio 单二进制内嵌前端）+ frontend/（React + Vite，依赖自持）；本 package 仅作构建/部署/测试脚本入口",
   "scripts": {
     "build": "node scripts/build.mjs",
     "build:rust": "node scripts/build-rust.mjs",
     "deploy": "node scripts/deploy.mjs",
-    "dev": "npm run dev -w frontend",
+    "dev": "npm run dev --prefix frontend",
     "test": "node test/e2e-test.mjs http://127.0.0.1:${CCWEB_PORT:-18090}/"
   }
 }
