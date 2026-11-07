@@ -22,9 +22,17 @@ pub fn homedir() -> String {
     }
 }
 
+#[derive(Clone, PartialEq)]
+pub enum AuthMode {
+    NoPass,
+    Password,
+}
+
 #[derive(Clone)]
 pub struct Config {
     pub port: u16,
+    pub auth: AuthMode,
+    pub auth_password: Option<String>,
     pub child_home: String, // 工作区根（= 子进程 HOME），正斜杠规范
     pub single: bool,
     pub keeperd_url: String,
@@ -41,8 +49,14 @@ impl Config {
         let child_home = super::util::P(&std::env::var("CCWEB_HOME").ok().filter(|s| !s.is_empty())
             .unwrap_or_else(homedir));
         let jj = |a: &str, b: &str, c: &str| format!("{a}/{b}/{c}");
+        let auth = match std::env::var("CCWEB_AUTH").as_deref() {
+            Ok("password") => AuthMode::Password,
+            _ => AuthMode::NoPass,
+        };
         Self {
             port,
+            auth,
+            auth_password: std::env::var("CCWEB_PASSWORD").ok().filter(|s| !s.is_empty()),
             single: std::env::var("CCWEB_SINGLE").as_deref() == Ok("1"),
             keeperd_url: std::env::var("KEEPERD_URL").ok().filter(|s| !s.is_empty())
                 .unwrap_or_else(|| "http://127.0.0.1:7998".into()),

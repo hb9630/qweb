@@ -8,10 +8,38 @@ fn reqwest_probe_client() -> reqwest::Client {
         .expect("reqwest probe client")
 }
 
+/// CLI 参数（--auth=nopass|password / --password=xxx，等号与空格分隔都收）；
+/// env 兜底：CCWEB_AUTH / CCWEB_PASSWORD（systemd unit 传 env 比 args 方便）
+fn apply_cli(cfg: &mut ccweb_core::config::Config) {
+    let mut args = std::env::args().skip(1);
+    while let Some(a) = args.next() {
+        let mut val = |flag: &str| -> Option<String> {
+            a.strip_prefix(&format!("{flag}=")).map(str::to_string).or_else(|| {
+                if a == flag { args.next() } else { None }
+            })
+        };
+        if let Some(v) = val("--auth") {
+            cfg.auth = match v.as_str() {
+                "password" => ccweb_core::config::AuthMode::Password,
+                "nopass" => ccweb_core::config::AuthMode::NoPass,
+                other => { eprintln!("× --auth 只支持 nopass | password，收到：{other}"); std::process::exit(2); }
+            };
+        } else if let Some(v) = val("--password") {
+            cfg.auth_password = Some(v);
+        }
+    }
+    if cfg.auth == ccweb_core::config::AuthMode::Password && cfg.auth_password.as_deref().unwrap_or("").is_empty() {
+        eprintln!("× --auth=password 需要密码：--password=xxx 或 CCWEB_PASSWORD");
+        std::process::exit(2);
+    }
+}
+
 #[tokio::main]
 async fn main() {
-    let cfg = ccweb_core::config::Config::from_env();
+    let mut cfg = ccweb_core::config::Config::from_env();
+    apply_cli(&mut cfg);
     let app = Arc::new(ccweb_core::App {
+        auth: ccweb_core::auth::AuthState::new(cfg.auth.clone(), cfg.auth_password.clone()),
         cfg: cfg.clone(),
         fs_hub: ccweb_core::fswatch::FsHub::new(),
         sessions: Default::default(),

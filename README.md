@@ -68,6 +68,19 @@ npm run deploy         # 正式部署（见下）
 | `CCWEB_CLAUDE` | PATH 探测 | claude 可执行文件路径覆盖 |
 | `CCWEB_NO_RUST` | – | `=1` 时 npm run build 跳过 Rust 单文件打包 |
 
+## 访问认证（code-server 同款语义）
+
+```bash
+./ccweb --auth=nopass                      # 默认：无认证
+./ccweb --auth=password --password=xxx     # 密码模式
+CCWEB_AUTH=password CCWEB_PASSWORD=xxx ./ccweb   # env 形态（systemd unit 传 env 更方便）
+```
+
+- 密码模式：全部 HTTP/WS 需会话 cookie；未登录页面 303 → `/login`（内建深色登录页），API 401，WS 拒绝
+- 登录成功签发 30 天 `ccweb_auth` cookie（HttpOnly/SameSite=Lax）；`/logout` 登出销毁
+- 会话 token 内存态：**服务重启后需重新登录**；密码为常数时间比较
+- base_path 兼容：`/login` 已入路由锚点表，反代前缀下照常工作
+
 ## 路由：零配置 base_path
 
 前端资源全相对引用（vite `base:'./'`），服务端把路径中最早出现的路由锚点（`/api/` `/ws/` `/assets/` …）之前的内容一律当 base 剥掉——nginx 剥前缀、透传带前缀、本地根形态，三种姿势同一套逻辑，反代无需任何配置。

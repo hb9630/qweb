@@ -5,10 +5,10 @@ use axum::http::{Response, StatusCode};
 use axum::response::IntoResponse;
 
 // 零配置 base_path：锚点前的一切视为反代前缀剥掉（server.mjs:19）
-pub const ANCHORS: [&str; 5] = ["/api/", "/ws/", "/assets/", "/favicon.ico", "/index.html"];
+pub const ANCHORS: [&str; 7] = ["/api/", "/ws/", "/assets/", "/favicon.ico", "/index.html", "/login", "/logout"];
 
-/// 最早出现的锚点下标处截断；无锚点 → None（SPA 入口）
-pub fn strip_base(p: &str) -> Option<String> {
+/// 最早出现的锚点下标；无锚点 → None（SPA 入口）
+pub fn strip_base_cut(p: &str) -> Option<usize> {
     let mut cut: Option<usize> = None;
     for a in ANCHORS {
         if let Some(i) = p.find(a) {
@@ -18,7 +18,12 @@ pub fn strip_base(p: &str) -> Option<String> {
             });
         }
     }
-    cut.map(|c| {
+    cut
+}
+
+/// 剥离后的路径（无锚点 → None）；`&p[..cut]` 即反代 base 前缀
+pub fn strip_base(p: &str) -> Option<String> {
+    strip_base_cut(p).map(|c| {
         let s = &p[c..];
         if s.is_empty() { "/".to_string() } else { s.to_string() }
     })

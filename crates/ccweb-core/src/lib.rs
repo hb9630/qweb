@@ -3,6 +3,7 @@
 // 分发架构：与 Node 版同构——单个中央 handler 按源码顺序 if 链匹配
 // （未知 /api/* 自然落入静态/SPA），而非 axum 声明式路由；strip_base 只做一处。
 pub mod api;
+pub mod auth;
 pub mod config;
 pub mod ctxwin;
 pub mod fsapi;
@@ -22,6 +23,7 @@ use axum::body::Body;
 use axum::extract::ws::WebSocketUpgrade;
 use axum::extract::{FromRequestParts, Request, State};
 use axum::http::{HeaderName, Method, Response, StatusCode};
+use auth::AuthState;
 use config::Config;
 use ctxwin::CtxWin;
 use fswatch::FsHub;
@@ -36,6 +38,7 @@ pub struct Http {
 /// 全局共享状态
 pub struct App {
     pub cfg: Config,
+    pub auth: AuthState,
     pub fs_hub: Arc<FsHub>,
     pub sessions: SessionMap,
     pub ctxwin: Arc<CtxWin>,
@@ -77,13 +80,48 @@ async fn dispatch(State(app): State<Arc<App>>, req: Request) -> Response<Body> {
         Some(p) => p,
     };
     let method = parts.method.clone();
-
-    // ---- WS 升级（server.mjs:733-760 upgrade 事件）----
     let wants_ws = parts
         .headers
         .get(HeaderName::from_static("upgrade"))
         .and_then(|v| v.to_str().ok())
         .is_some_and(|v| v.eq_ignore_ascii_case("websocket"));
+
+    // ---- 认证闸门（--auth=password 时全站需会话 cookie；/login /logout 放行）----
+    // base 前缀：锚点前的内容；无锚点（整段即 base，SPA 入口）→ 去尾斜杠的全路径
+    let base_prefix = match httpbase::strip_base_cut(&path) {
+        Some(c) => path[..c].to_string(),
+        None => path.trim_end_matches('/').to_string(),
+    };
+    if pathname != "/login" && pathname != "/logout" && app.auth.required() {
+        let cookie = parts.headers.get(axum::http::header::COOKIE);
+        if !app.auth.validate(cookie) {
+            if wants_ws {
+                return httpbase::text_resp(StatusCode::UNAUTHORIZED, "unauthorized");
+            }
+            if pathname.starts_with("/api/") {
+                return httpbase::json_resp(StatusCode::UNAUTHORIZED, serde_json::json!({ "error": "未登录" }));
+            }
+            // 页面请求 → 登录页（303 保留 base 前缀）
+            return Response::builder()
+                .status(StatusCode::SEE_OTHER)
+                .header("location", format!("{base_prefix}/login"))
+                .body(Body::empty())
+                .expect("auth redirect");
+        }
+    }
+
+    // ---- 登录/登出（认证面本身）----
+    if pathname == "/login" {
+        if method == Method::POST {
+            return auth::handle_login(&app, body, &base_prefix).await;
+        }
+        return auth::login_page(false, &base_prefix);
+    }
+    if pathname == "/logout" {
+        return auth::handle_logout(&app, &base_prefix, parts.headers.get(axum::http::header::COOKIE));
+    }
+
+    // ---- WS 升级（server.mjs:733-760 upgrade 事件）----
     if wants_ws {
         if pathname == "/ws/fs" {
             return match WebSocketUpgrade::from_request_parts(&mut parts, &()).await {
