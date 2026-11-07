@@ -18,4 +18,6 @@ const done = new Promise((ok, no) => {
 });
 await new Promise(r => ws.onopen = r);
 ws.send(JSON.stringify({t:"user", text:"回复ok两个字母即可"}));
-await done; ws.close(); console.log("✓ 端到端全通\n");
+await done; ws.close();
+await fetch(`${base}/api/sessions/${s.id}`, { method: "DELETE" }).catch(() => {}); // 清理：不留 /tmp 活会话污染前端刷新引导
+console.log("✓ 端到端全通\n");

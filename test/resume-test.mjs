@@ -9,6 +9,12 @@ const ws = new WebSocket(b.protocol.replace(/^http/, "ws") + "//" + b.host + b.p
 const t = setTimeout(() => { console.log("✗ 60s 无回复"); process.exit(1); }, 60000);
 ws.onopen = () => { console.log("✓ WS open"); setTimeout(() => ws.send(JSON.stringify({t:"user", text:"回复ok两个字母即可"})), 300); };
 ws.onmessage = (e) => { const m = JSON.parse(e.data);
-  if (m.t==="cc" && m.ev?.type==="stream_event" && m.ev.event?.delta?.text) { console.log("✓ claude 回复:", JSON.stringify(m.ev.event.delta.text.slice(0,40))); clearTimeout(t); setTimeout(()=>process.exit(0), 300); }
+  if (m.t==="cc" && m.ev?.type==="stream_event" && m.ev.event?.delta?.text) {
+    console.log("✓ claude 回复:", JSON.stringify(m.ev.event.delta.text.slice(0,40)));
+    clearTimeout(t);
+    ws.close();
+    // 清理：不留活会话污染前端刷新引导
+    fetch(`${base}/api/sessions/${s.id}`, { method: "DELETE" }).catch(() => {}).finally(() => process.exit(0));
+  }
   if (m.t==="exit") { console.log("✗ 进程退出 code=" + m.code); process.exit(1); } };
 ws.onerror = () => { console.log("✗ WS 连接错误"); process.exit(1); };

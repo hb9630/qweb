@@ -58,18 +58,16 @@ pub async fn sessions(app: &App, method: &Method, rest: &str, body: Option<Body>
     if rest.is_empty() && method == Method::POST {
         return post(app, body).await;
     }
-    // DELETE /api/sessions/{id}
+    // DELETE /api/sessions/{id}（分发器已剥去 /api/sessions/ 前缀，rest 即 id）
     if method == Method::DELETE {
-        if let Some(id) = rest.strip_prefix('/') {
-            if is_word_id(id) {
-                let s = app.sessions.read().await.get(id).cloned();
-                if let Some(s) = s {
-                    s.kill();
-                    app.sessions.write().await.remove(id);
-                    return json_resp(StatusCode::OK, json!({ "ok": true }));
-                }
-                return json_resp(StatusCode::NOT_FOUND, json!({ "error": "会话不存在" }));
+        if is_word_id(rest) {
+            let s = app.sessions.read().await.get(rest).cloned();
+            if let Some(s) = s {
+                s.kill();
+                app.sessions.write().await.remove(rest);
+                return json_resp(StatusCode::OK, json!({ "ok": true }));
             }
+            return json_resp(StatusCode::NOT_FOUND, json!({ "error": "会话不存在" }));
         }
         // 未匹配 → 静态兜底（Node 同款：regex 不命中落到静态分支）
         return crate::statics::serve("/index.html");
