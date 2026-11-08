@@ -22,7 +22,11 @@ export default defineConfig({
     },
   },
   server: {
-    // 开发时容器外访问：宿主机 8091 → ccweb 容器 8090
-    proxy: { "/api": "http://127.0.0.1:8090", "/ws": { target: "ws://127.0.0.1:8090", ws: true } },
+    // 开发调试：npm run dev 起 Vite（HMR 秒级热更）——改前端不用重新 build、不用动后端进程；
+    // /api 与 /ws 全部代理到本机常驻 Rust 实例（端口可用 CCWEB_DEV_PORT 覆盖）
+    proxy: {
+      "/api": `http://127.0.0.1:${process.env.CCWEB_DEV_PORT || 18090}`,
+      "/ws": { target: `http://127.0.0.1:${process.env.CCWEB_DEV_PORT || 18090}`, ws: true },
+    },
   },
 });

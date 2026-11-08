@@ -1,0 +1,8 @@
+{
+  "name": "dsweb",
+  "private": true,
+  "description": "dsweb daemon——CDP 驱动 DeepSeek 网页版的 OpenAI 兼容端点（ccweb qtom 引擎模型通道）",
+  "dependencies": {
+    "ws": "^8.22.0"
+  }
+}

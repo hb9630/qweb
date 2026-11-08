@@ -1,0 +1,16 @@
+[package]
+name = "ccweb-server"
+version = "0.1.0"
+edition = "2021"
+description = "ccweb 服务进程：bind/信号/启动日志（业务在 ccweb-core）"
+
+# 产物名对齐部署名：target/release/ccweb → /usr/local/ccweb（make/make install 同款语义）
+[[bin]]
+name = "ccweb"
+path = "src/main.rs"
+
+[dependencies]
+ccweb-core = { path = "../ccweb-core" }
+axum = "0.8"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "time"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls"] }

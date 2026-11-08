@@ -1,19 +1,21 @@
-// ccweb 主界面：VSCode 三栏（可拖动调宽）
-// 左=资源管理器 | 中=编辑器 | 右=Copilot Chat
-// 手机（<768px）：竖排 + 顶部三选一 tab（对话默认），点文件自动切编辑 tab
+// ccweb 主界面：对话主导（chat-first）——对话铺满全宽做底层，其头部升格为全局标题栏；
+// 左上三件套：cwd chip 开关目录树浮层 / ▾ 历史工作目录 / 换目录选择器（见 ChatPanel）。
+// 目录树浮层从标题栏下方垂到底（左缘贴边），编辑器浮层紧贴其右——两者各自头部有 X
+// 独立关闭（相当于把原三栏的树/编辑器搬到标题栏下面浮起）；编辑器最后一个 tab
+// 关闭仍自动收编辑器（Editor 既有语义）。手机/桌面同一结构（浮层宽 clamp 到 vw）。
 import { useCallback, useEffect, useRef, useState } from "react";
-import { API } from "./lib/api";
-import { Bot, FileCode2, FolderOpen as FolderIcon, X } from "lucide-react";
+import { API, hashSid, setHashSid } from "./lib/api";
+import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import Explorer from "./Explorer";
 import Editor from "./Editor";
 import ChatPanel from "./ChatPanel";
 
-interface LiveSession { id: string; cwd: string; claudeSid?: string | null }
+interface LiveSession { id: string; cwd: string; claudeSid?: string | null; engine?: string | null }
 
 const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
 
-function Resizer({ onDrag }: { onDrag: (dx: number) => void }) {
+function Resizer({ onDrag, lineAt = "-left-px" }: { onDrag: (dx: number) => void; lineAt?: string }) {
   const [active, setActive] = useState(false);
   const last = useRef(0);
   const down = (e: React.MouseEvent) => {
@@ -33,13 +35,14 @@ function Resizer({ onDrag }: { onDrag: (dx: number) => void }) {
     document.addEventListener("mouseup", up);
   };
   return (
-    // 线贴左（不居中）：左面板多带底色（如 Explorer bg-card/30），线画在色块右缘
-    // 上、与色差台阶重合——居中时台阶与线相距数像素，视觉成"双线"。
-    // 容器铺 bg-background：透明会露出 body 底色，主题切换时不跟随。
-    <div onMouseDown={down} className="group relative z-10 w-1.5 shrink-0 cursor-col-resize bg-background">
+    // 浮层边缘调宽把手：纯命中区（透明底），可见的分割线由浮层自身 border 承担；
+    // hover/拖动时高亮线精确压在同一条 border 上（lineAt：右缘缝压 -left-px 的 border-r，
+    // 树|编辑器缝压 left-0 的编辑器 border-l——差 1px 就会看成"两根线"）。
+    // h-full 由外层绝对定位容器（top-8 bottom-0，高度确定）撑起。
+    <div onMouseDown={down} className="group relative z-10 h-full w-1.5 shrink-0 cursor-col-resize">
       <div
-        className="pointer-events-none absolute inset-y-0 left-0 w-px bg-border transition-colors group-hover:bg-foreground/70"
-        style={active ? { background: "oklch(var(--primary))" } : undefined}
+        className={cn("pointer-events-none absolute inset-y-0 w-px bg-foreground/70 opacity-0 transition-opacity group-hover:opacity-100", lineAt)}
+        style={active ? { background: "oklch(var(--primary))", opacity: 1 } : undefined}
       />
     </div>
   );
@@ -71,33 +74,26 @@ export default function App() {
   };
   const openFile = (path: string, pinned?: boolean) => {
     setOpenReq((r) => ({ path, pinned: !!pinned, seq: (r?.seq ?? 0) + 1 }));
-    setShowEditor(true); // 编辑器被关掉后，点文件应重新弹出
-    setMtab("edit"); // 手机：点/双击文件即切到编辑 tab（桌面 mtab 不参与布局，无感）
+    setShowEditor(true); // 编辑器被整组关掉后，点文件应重新弹出浮层（树不联动收起——浮层组一体）
   };
   const [groups, setGroups] = useState<any[]>([]);
   const [live, setLive] = useState<LiveSession | null>(null);
   const [histEv, setHistEv] = useState<{ id: string; cwd: string; events: any[]; resumeSid: string | null; model?: string | null } | null>(null);
   const [pending, setPending] = useState<{ events: any[]; text: string; model?: string | null } | null>(null);
   const [booted, setBooted] = useState(false);
-  // 布局持久化：面板开合与宽度刷新后保持（localStorage）
+  // 会话恢复中（挂载→重连/自动 resume 的窗口期）：显示"正在恢复"而非"（空会话）"，
+  // 后端未就绪时靠 bootTick 重试直到成功
+  const [restoring, setRestoring] = useState(true);
+  const [bootTick, setBootTick] = useState(0);
+  // 布局持久化：浮层组开合与宽度刷新后保持（localStorage）；默认全关 = 纯对话第一印象
   const saved = (() => {
     try { return JSON.parse(localStorage.getItem("ccweb.layout") || "{}"); }
     catch { return {}; }
   })();
-  const [wLeft, setWLeft] = useState(saved.wLeft ?? 272);
-  const [wRight, setWRight] = useState(saved.wRight ?? 420);
-  const [showExplorer, setShowExplorer] = useState(saved.showExplorer ?? true);
-  const [showChat, setShowChat] = useState(saved.showChat ?? true);
-  const [showEditor, setShowEditor] = useState(saved.showEditor ?? true); // 人工开合（Activity Bar）
-  // 手机布局（<768px）：三栏改顶部三选一 tab，默认对话；面板保持挂载只切显隐（编辑器未保存内容/树状态不丢）
-  const [mobile, setMobile] = useState(() => window.matchMedia("(max-width: 767px)").matches);
-  const [mtab, setMtab] = useState<"chat" | "files" | "edit">("chat");
-  useEffect(() => {
-    const mq = window.matchMedia("(max-width: 767px)");
-    const h = () => setMobile(mq.matches);
-    mq.addEventListener("change", h);
-    return () => mq.removeEventListener("change", h);
-  }, []);
+  const [wTree, setWTree] = useState(saved.wTree ?? 280);
+  const [wEditor, setWEditor] = useState(saved.wEditor ?? Math.min(720, Math.round(window.innerWidth * 0.46)));
+  const [showTree, setShowTree] = useState(saved.showTree ?? false);
+  const [showEditor, setShowEditor] = useState(saved.showEditor ?? false);
 
   const refresh = useCallback(async () => {
     try {
@@ -108,9 +104,18 @@ export default function App() {
   useEffect(() => { refresh().then(() => setBooted(true)); }, [refresh]);
   useEffect(() => {
     localStorage.setItem("ccweb.layout",
-      JSON.stringify({ wLeft, wRight, showExplorer, showEditor, showChat }));
-  }, [wLeft, wRight, showExplorer, showEditor, showChat]);
+      JSON.stringify({ showTree, showEditor, wTree, wEditor }));
+  }, [showTree, showEditor, wTree, wEditor]);
   useEffect(() => { if (!live) setPending(null); }, [live]);
+  // 任何路径（含手动新会话/打开历史）就位即清除"恢复中"
+  useEffect(() => { if (live || histEv) setRestoring(false); }, [live, histEv]);
+  // 会话锚点同步（live 已知 claudeSid 的路径：resume/重连/历史回放；新会话 init 到达
+  // 后由 ChatPanel 侧补写）。只在有会话时写——启动窗口（live/histEv 均 null）绝不能清：
+  // 本 effect 挂载时先于 boot 跑，清了锚点 boot 就只能走"最新会话"启发式
+  useEffect(() => {
+    const sid = live?.claudeSid ?? histEv?.id ?? null;
+    if (sid) setHashSid(sid);
+  }, [live, histEv]);
 
   // 全局字号：Ctrl+= 放大 / Ctrl+- 缩小 / Ctrl+0 重置（改 html font-size 基准，UI 均为 rem 等比缩放）
   const [fsTip, setFsTip] = useState<number | null>(null);
@@ -138,6 +143,15 @@ export default function App() {
   // 工作区根 = 环境 HOME（后端 /api/env 下发，不写死 /root；拉到前用 /root 兜底）
   const [home, setHome] = useState(""); // /api/env 到达前未知（不再默认 /root：宿主机形态 HOME 各异）
   const [envModels, setEnvModels] = useState<string[]>([]);
+  // 引擎清单（/api/env 下发；qtom 在后端配了 --dsweb 才出现）与偏好（下次新会话用）
+  const [engines, setEngines] = useState<{ id: string; label: string }[]>([]);
+  const [enginePref, setEnginePref] = useState<string>(() => {
+    try { return localStorage.getItem("ccweb.engine") || "claude"; } catch { return "claude"; }
+  });
+  const onEnginePref = (id: string) => {
+    setEnginePref(id);
+    try { localStorage.setItem("ccweb.engine", id); } catch {}
+  };
   useEffect(() => {
     fetch(`${API}/env`).then((r) => r.json())
       .then((d: any) => {
@@ -146,6 +160,7 @@ export default function App() {
           if (!userRoot.current) setRoot(d.home); // 从未人工设定过才用 home 兜底
         }
         if (Array.isArray(d.models)) setEnvModels(d.models.map(String));
+        if (Array.isArray(d.engines)) setEngines(d.engines);
       })
       .catch(() => {});
   }, []);
@@ -153,6 +168,57 @@ export default function App() {
   useEffect(() => {
     if (!booted || live || histEv) return;
     (async () => {
+      // 0) URL 锚点优先：#s=<sid> 精确恢复该会话（多 tab 各自钉住、重启后精确回原对话）
+      const want = hashSid();
+      if (want) {
+        try {
+          const r = await fetch(`${API}/sessions`);
+          const list = await r.json();
+          const mine = (Array.isArray(list) ? list : []).find((x: any) => x.claude_sid === want);
+          if (mine) {
+            // 已有活进程：与下方"活会话重连"同款（n>0 靠 pre+buf 回放，n=0 拉 transcript 补）
+            const attach = (d: any) => {
+              if (d?.events?.length || d?.model) setPending({ events: d.events ?? [], text: "", model: d.model ?? null });
+              else setPending(null);
+              setLive({ id: mine.id, cwd: mine.cwd, claudeSid: mine.claude_sid ?? null, engine: mine.engine ?? "claude" });
+              setRestoring(false);
+            };
+            if (mine.n > 0 || !mine.claude_sid) attach(null);
+            else fetch(`${API}/history/${want}`).then((x) => x.json()).then(attach).catch(() => attach(null));
+            return;
+          }
+          // 无活进程：拉历史 + resume（不带 cwd，服务端从 transcript 行内 cwd 推导）
+          const [hr, pr] = await Promise.all([
+            fetch(`${API}/history/${want}`).then((x) => (x.ok ? x.json() : null)).catch(() => null),
+            fetch(`${API}/sessions`, {
+              method: "POST", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ resume: want }),
+            }),
+          ]);
+          if (pr.ok) {
+            const d = await pr.json();
+            setPending({ events: hr?.events ?? [], text: "", model: hr?.model ?? null });
+            setLive({ id: d.id, cwd: d.cwd, claudeSid: d.claudeSid ?? want, engine: d.engine ?? "claude" });
+            setRestoring(false);
+            refresh();
+            return;
+          }
+          // resume 失败（原目录已删/进程起不来等）：锚点承诺"回到这个会话"——
+          // 退到只读回放（cwd 从会话列表找），手动恢复仍可用；transcript 都没了才清锚点走常规
+          if (hr) {
+            const grp = groups.find((x: any) => x.sessions?.some((ss: any) => ss.id === want));
+            openHistory(want, grp?.cwd ?? "");
+            setRestoring(false);
+            return;
+          }
+          setHashSid(null);
+        } catch {
+          // 后端未就绪（重启窗口）：保留锚点，2s 后重试
+          setRestoring(true);
+          setTimeout(() => setBootTick((t) => t + 1), 2000);
+          return;
+        }
+      }
       // 1) server 上还有活会话（如刷新/重开标签页）→ 直接重连。
       //    必须同时取 transcript：resume 出来的进程首条消息前不发任何事件（连 init 都没有），
       //    buf 回放是空的——不补历史的话对话区空、模型/ctx 都没有
@@ -165,7 +231,8 @@ export default function App() {
             // d=null（buf 已有全量）也必须清 pending——上一会话残留的初始事件会注入新面板
             if (d?.events?.length || d?.model) setPending({ events: d.events ?? [], text: "", model: d.model ?? null });
             else setPending(null);
-            setLive({ id: s.id, cwd: s.cwd, claudeSid: s.claude_sid ?? null });
+            setLive({ id: s.id, cwd: s.cwd, claudeSid: s.claude_sid ?? null, engine: s.engine ?? "claude" });
+            setRestoring(false);
             // 树不跟随会话 cwd（左树是目录唯一事实源，刷新只还原用户设定/HOME）
           };
           // n>0：进程已发过事件，buf 回放即完整对话+init+result（再注 transcript 会渲染两份）
@@ -174,7 +241,12 @@ export default function App() {
           else fetch(`${API}/history/${s.claude_sid}`).then((x) => x.json()).then(attach).catch(() => attach(null));
           return;
         }
-      } catch {}
+      } catch {
+        // 后端还没就绪（重启窗口）——2s 后重试，别停在"空会话"迷惑态
+        setRestoring(true);
+        setTimeout(() => setBootTick((t) => t + 1), 2000);
+        return;
+      }
       // 2) 无活会话（被空闲回收 / server 重启过）→ 自动 --resume 最近一次会话，刷新即回到可聊状态。
       //    挑"最近使用且有真实对话"的那个：空会话（刚建的、纯命令探测的）title 为空，跳过——
       //    否则 resume 到一个空 transcript，对话区就是空的。
@@ -194,39 +266,53 @@ export default function App() {
           const d = await r.json();
           if (r.ok) {
             setPending({ events: hr?.events ?? [], text: "", model: hr?.model ?? null });
-            setLive({ id: d.id, cwd: d.cwd, claudeSid: d.claudeSid ?? g.id });
+            setLive({ id: d.id, cwd: d.cwd, claudeSid: d.claudeSid ?? g.id, engine: d.engine ?? "claude" });
+            setRestoring(false);
             refresh();
             return;
           }
         } catch {}
         openHistory(g.id, g.cwd); // resume 失败兜底：只读历史（可手动恢复）
+        setRestoring(false);
+      } else {
+        setRestoring(false); // 真没会话（全新环境）——"（空会话）"是真实状态
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [booted]);
+  }, [booted, bootTick]);
 
   const newSession = async (cwd?: string) => {
     const r = await fetch(`${API}/sessions`, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ cwd: cwd ?? (root || home || "/") }),
+      body: JSON.stringify({ cwd: cwd ?? (root || home || "/"), engine: enginePref }),
     });
     const d = await r.json();
     if (!r.ok) return;
     setHistEv(null);
     setPending(null); // 清旧初始事件：否则新 ChatPanel 挂载时又注入上一会话的 transcript
-    setLive({ id: d.id, cwd: d.cwd });
+    setHashSid(null); // 显式清锚点（sync effect 不写空值；init 到达后 ChatPanel 补写新 sid）
+    setLive({ id: d.id, cwd: d.cwd, engine: d.engine ?? enginePref });
     refresh();
   };
 
-  // 设为工作目录：树切根 + 记忆（刷新后沿用）+ 会话联动。
+  // 设为工作目录（唯一入口 = 标题栏三件套）：树切根 + 记忆（刷新沿用）+ 会话联动 + 记最近目录。
   // 语义（对用户可见的承诺）：换目录 = 新会话 = 新 claude 实例（cwd 在 spawn 时固化，长驻进程改不了）；
   // 旧会话消息在官方 transcript 里，历史列表可 resume 续聊；server 侧空闲 20min 自动回收进程。
   const [wsNotice, setWsNotice] = useState<string | null>(null);
+  const pushRecent = (p: string) => {
+    try {
+      const cur = JSON.parse(localStorage.getItem("ccweb.recents") || "[]").filter((x: string) => x !== p);
+      localStorage.setItem("ccweb.recents", JSON.stringify([p, ...cur].slice(0, 5)));
+    } catch {}
+  };
   const setWorkspace = (path: string) => {
     if (path === root) return;
     setRoot(path);
     userRoot.current = true;
+    pushRecent(path);
     try { localStorage.setItem("ccweb.root", path); } catch {}
+    // "目录树是左上角选择的结果"：选定即展开浮层（此前关着也开）
+    setShowTree(true);
     if (live && live.cwd !== path) {
       newSession(path);
       setWsNotice(`工作目录已切换到 ${path} —— 已开启新会话（新 claude 实例）`);
@@ -260,9 +346,18 @@ export default function App() {
     if (!r.ok) return;
     setPending({ events: histEv.events, text, model: histEv.model ?? null });
     setHistEv(null);
-    setLive({ id: d.id, cwd: histEv.cwd, claudeSid: d.claudeSid ?? histEv.resumeSid });
+    setLive({ id: d.id, cwd: histEv.cwd, claudeSid: d.claudeSid ?? histEv.resumeSid, engine: d.engine ?? "claude" });
     refresh();
   };
+
+  // ---- 浮层几何（与 return 里的渲染同源）：树宽/编辑器宽均 clamp 进视口，
+  // 编辑器宽再让位树宽（两者合计不超屏）。chatInset 多让一格调宽把手宽
+  // （w-1.5≈7px、不透明、z-30 在内容列之上——不让位会把输入框左缘压掉一条） ----
+  const RESW = 8;
+  const treeW = Math.min(wTree, window.innerWidth);
+  const edLeft = showTree ? treeW : 0;
+  const edW = Math.min(wEditor, Math.max(0, window.innerWidth - edLeft));
+  const floatW = edLeft + (showEditor ? edW : 0) + ((showTree || showEditor) ? RESW : 0);
 
   const chatProps = {
     histGroups: groups,
@@ -270,28 +365,9 @@ export default function App() {
     onOpenHistory: openHistory, onRefreshHistory: refresh, onResume: resumeChat,
     notice: wsNotice, onDismissNotice: () => setWsNotice(null), root,
     models: envModels,
-  };
-
-  // Activity Bar（VSCode 式细左条）：资源管理器 / Chat 开关
-  const barBtn = (active: boolean, title: string, Icon: any, onClick: () => void) => (
-    <button onClick={onClick} title={title}
-      className="relative flex h-12 w-full items-center justify-center text-muted-foreground transition-colors hover:text-foreground">
-      {active && <span className="absolute inset-y-1 left-0 w-[2px] rounded-full bg-primary" />}
-      <Icon className="h-5 w-5" style={active ? { color: "oklch(var(--foreground))" } : undefined} />
-    </button>
-  );
-
-  // 手机顶部三选一 tab（对话为默认；样式呼应 Activity Bar 的主色指示条）
-  const mtabBtn = (k: "chat" | "files" | "edit", label: string, Icon: any) => {
-    const active = mtab === k;
-    return (
-      <button key={k} onClick={() => setMtab(k)}
-        className={cn("relative flex flex-1 items-center justify-center gap-1.5 text-xs transition-colors",
-          active ? "font-medium text-foreground" : "text-muted-foreground hover:text-foreground")}>
-        {active && <span className="absolute inset-x-3 bottom-0 h-[2.5px] rounded-t-sm bg-primary" />}
-        <Icon className="h-4 w-4" />{label}
-      </button>
-    );
+    engines, enginePref, onEnginePref,
+    home, treeOpen: showTree, onToggleTree: () => setShowTree((v) => !v),
+    onSwitchRoot: setWorkspace, chatInset: floatW,
   };
 
   const chat =
@@ -301,73 +377,60 @@ export default function App() {
       <ChatPanel key={live.claudeSid ?? live.id} session={live} initialEvents={pending?.events} pendingText={pending?.text} initModel={pending?.model ?? undefined} {...chatProps} />
     ) : histEv ? (
       <ChatPanel key={histEv.id} historyEvents={histEv} initModel={histEv.model ?? undefined} {...chatProps} />
+    ) : restoring ? (
+      <div className="flex h-full flex-col items-center justify-center gap-2 text-xs text-muted-foreground">
+        <Loader2 className="h-4 w-4 animate-spin" />
+        正在恢复会话…
+      </div>
     ) : (
       <ChatPanel {...chatProps} />
     );
 
-  // 手机布局：三面板绝对定位叠放、visibility 切换 —— 绝不能用 display:none（高度归零会让
-  // stick-to-bottom 重置滚动，切 tab 时消息列表"从上往下整个重刷"）；visibility 保留布局与滚动，
-  // 切回瞬间恢复，编辑器未保存内容/树展开状态也不丢。
-  if (mobile) return (
-    <div className="flex h-screen w-screen flex-col overflow-hidden">
-      <nav className="flex h-11 shrink-0 items-stretch border-b border-border/60 bg-card/40">
-        {mtabBtn("chat", "对话", Bot)}
-        {mtabBtn("files", "文件", FolderIcon)}
-        {mtabBtn("edit", "编辑", FileCode2)}
-      </nav>
-      <div className="relative min-h-0 flex-1">
-        <div className={cn("absolute inset-0 flex", mtab !== "files" && "invisible")}>
-          <Explorer root={root || home || "/"} home={home} setRoot={setWorkspace} onOpenFile={openFile} activeFile={openReq?.path ?? null} onMoved={onMoved} />
-        </div>
-        <div className={cn("absolute inset-0 flex flex-col", mtab !== "edit" && "invisible")}>
-          <Editor openReq={openReq} />
-        </div>
-        <main className={cn("absolute inset-0 flex flex-col", mtab !== "chat" && "invisible")}>
-          {chat}
-        </main>
-      </div>
-      {fsTip !== null && (
-        <div className="pointer-events-none fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-md border border-border/60 bg-card px-3 py-1.5 text-xs text-foreground/90 shadow-lg">
-          字号 {fsTip}px <span className="text-muted-foreground">（Ctrl+0 重置）</span>
-        </div>
-      )}
-    </div>
-  );
-
+  // ---- 布局：对话铺底（含全局标题栏=ChatPanel 头部 h-8），树/编辑器浮层叠其上 ----
+  // 树：left:0、标题栏下方(top-8)垂到底；编辑器：紧贴树右（树关时贴左边），树开合时整体平移。
+  // 各自头部 X 独立关闭（树收/编辑器收互不影响）；编辑器"最后一个 tab 关闭→收面板"保留。
   return (
-    <div className="flex h-screen w-screen overflow-hidden">
-      <div className="flex w-12 shrink-0 flex-col items-center border-r border-border/60 bg-card/40 py-2">
-        {barBtn(showExplorer, "资源管理器", FolderIcon, () => setShowExplorer((v) => !v))}
-        {barBtn(showEditor, "编辑器", FileCode2, () => setShowEditor((v) => !v))}
-        {barBtn(showChat, "Copilot 对话", Bot, () => setShowChat((v) => !v))}
-      </div>
-      {showExplorer && (
-        <div className="flex shrink-0" style={{ width: wLeft }}>
-          <Explorer root={root || home || "/"} home={home} setRoot={setWorkspace} onOpenFile={openFile} activeFile={openReq?.path ?? null} onMoved={onMoved}
-            onClose={() => setShowExplorer(false)} />
+    <div className="relative h-screen w-screen overflow-hidden">
+      {/* 对话底层：铺满全宽（标题栏在其中横贯顶部；浮层开时内容列经 chatInset 在可见区居中） */}
+      <main className="absolute inset-0 flex flex-col">{chat}</main>
+
+      {/* 目录树浮层：无 border-t（标题栏 border-b 已画那条线，再画会叠双线）；
+          编辑器开着时右缝由编辑器 border-l 承担（树不再画 border-r），全缝单线。
+          不加阴影：会向会话区单侧落灰（左右不对称），层次交给 1px 分割线 */}
+      {showTree && (
+        <div
+          className={cn("absolute bottom-0 left-0 top-8 z-20 flex min-w-0 flex-col border-b border-border/70 bg-card",
+            !showEditor && "border-r")}
+          style={{ width: treeW }}>
+          <Explorer root={root || home || "/"} home={home} onOpenFile={openFile} activeFile={openReq?.path ?? null} onMoved={onMoved}
+            onClose={() => setShowTree(false)} />
         </div>
       )}
-      {/* 分隔线按实际相邻面板渲染：Explorer 右缘只要还有面板就画（拖 wLeft） */}
-      {showExplorer && (showEditor || showChat) && (
-        <Resizer onDrag={(dx) => setWLeft((v) => clamp(v + dx, 190, 460))} />
+      {/* 树右缘把手：树开着就在（编辑器在场时压在树|编辑器缝上，仍可调树宽） */}
+      {showTree && (
+        <div className="absolute bottom-0 top-8 z-30" style={{ left: treeW }}>
+          <Resizer lineAt={showEditor ? "left-0" : "-left-px"}
+            onDrag={(dx) => setWTree((v) => clamp(v + dx, 190, 460))} />
+        </div>
       )}
-      {showEditor && <Editor openReq={openReq} movedReq={movedReq} onClose={() => setShowEditor(false)} />}
-      {showEditor && showChat && (
-        <Resizer onDrag={(dx) => setWRight((v) => clamp(v - dx, 320, 640))} />
+
+      {/* 编辑器浮层（紧贴树右；border-l 即树/编辑器之间唯一的缝） */}
+      {showEditor && (
+        <div
+          className="absolute bottom-0 top-8 z-20 flex min-w-0 flex-col border-b border-r border-l border-border/70 bg-card"
+          style={{ left: edLeft, width: edW }}>
+          <Editor openReq={openReq} movedReq={movedReq} onClose={() => setShowEditor(false)} />
+        </div>
       )}
-      {showChat && (
-        <>
-          {/* 编辑器关闭时对话区弹性占满整个宽度 */}
-          <main className={cn("relative", showEditor ? "flex shrink-0 flex-col" : "flex min-w-0 flex-1 flex-col")} style={showEditor ? { width: wRight } : undefined}>
-            <button
-              className="absolute right-1.5 top-1.5 z-10 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-              title="关闭面板" onClick={() => setShowChat(false)}>
-              <X className="h-3.5 w-3.5" />
-            </button>
-            {chat}
-          </main>
-        </>
+      {showEditor && (
+        <div className="absolute bottom-0 top-8 z-30" style={{ left: edLeft + edW }}>
+          {/* 编辑器右缘把手：拖右加宽（旧三栏 v-dx 的方向语义在此相反）。
+              上限：留给对话内容至少 320px 可见区（chatInset 随之收缩） */}
+          <Resizer onDrag={(dx) => setWEditor((v) => clamp(v + dx, 360,
+            Math.min(window.innerWidth * 0.7, window.innerWidth - edLeft - 320)))} />
+        </div>
       )}
+
       {/* 字号提示（Ctrl+= / Ctrl+- / Ctrl+0） */}
       {fsTip !== null && (
         <div className="pointer-events-none fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-md border border-border/60 bg-card px-3 py-1.5 text-xs text-foreground/90 shadow-lg">

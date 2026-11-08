@@ -1,52 +1,51 @@
 # ccweb
 
-Claude Code 的流式 Web 工作台：对话（stream-json 双向管道）+ 文件树（右键全功能文件管理）+ 编辑器 + 终端。Rust 后端（axum/tokio 单二进制，前端全量嵌入）+ React 前端，frontend `npm install` + `npm run build` 即出可分发单文件。
+Claude Code 的流式 Web 工作台：对话（stream-json 双向管道）为全宽主角，目录树/编辑器是从标题栏左上（工作目录三件套）派生的一体化浮层（右键全功能文件管理、多 tab 编辑）。Rust 后端（axum/tokio 单二进制，前端全量嵌入）+ React 前端；npm 机制只用于 frontend/，根目录纯 shell 脚本（build.sh / deploy.sh）编排构建与部署。
 
 > 2026-11-06 从 `keeper/deploy/ccweb` 拆出独立仓库；2026-11-07 后端移植 Rust（Node 版已移除，API/WS 契约经双后端逐字节 diff 验证后切换）。
 
 ## 目录结构
 
 ```
-crates/             Rust 后端（cargo workspace）
+backend/            Rust 后端（cargo workspace 自持：Cargo.toml/lock、.cargo 镜像、target/ 都在这层）
   ccweb-core/       业务核心 lib：会话管道/fs API/历史回放/静态嵌入（Tauri 壳将来直接依赖）
-  ccweb-server/     薄 bin：bind/信号/启动日志
-frontend/           前端（React + TypeScript + Vite，依赖自持——node_modules 在 frontend/ 内）
-  src/Explorer      左栏文件树（右键菜单、多选、拖放、上传/下载）
-  src/ChatPanel     对话区（流式渲染、ctx 窗口、会话切换）
-  src/Editor        代码/文本编辑器
-  *-test.mjs        playwright UI 冒烟（node xxx-test.mjs，默认连 18090）
-scripts/            构建与部署
-  build.mjs         npm run build：前端 → Rust 单文件（build/ccweb）
-  build-rust.mjs    cargo release 构建 → build/ccweb
-  deploy.mjs        npm run deploy：组装 /usr/local/ccweb 安装树 + systemd
-  ccweb.service     systemd 单元模板（deploy.mjs 的输入）
-test/               服务端测试：e2e-test.mjs / resume-test.mjs
-build/              构建产物（git 忽略）：ccweb 单文件（~19MB）
+  ccweb-server/     薄 bin：CLI 解析/bind/信号/启动横幅
+frontend/           前端（React + TypeScript + Vite）——js/mjs 全部收在这层：依赖自持，测试也在这
+  src/ChatPanel     对话区（chat-first 布局底层主角，头部即全局标题栏：cwd chip 开关目录树 / ▾ 历史工作目录 / 换目录）
+  src/DirPicker     工作目录选择器（面包屑自由导航 + ✓ 确认；树锁死工作目录内，换目录唯一入口）
+  src/Explorer      目录树浮层（标题栏下方垂到底；右键菜单、多选、拖放、上传/下载；独立 X 关闭）
+  src/Editor        编辑器浮层（贴树右侧；tab 管理与编辑）
+  test/             node 测试（playwright UI 冒烟 + 服务端 e2e/resume + esbuild/jsdom 组件测试；stubs/ 为 esbuild 别名桩）
+build.sh            根目录唯一编排脚本（make/make install/make clean 语义）：构建出 ./ccweb；deploy（= install）装 /usr/local/ccweb + systemd；clean 清产物
+restart.sh          本机快速迭代：构建 + 重启 18090 服务（nohup ./restart.sh &；活会话断开，刷新自动 resume）
 ```
+
+npm 机制只存在于 frontend/ 内部（install/dev/build 走 vite）；cargo 一切在 backend/ 内；根目录无 package.json、无 Cargo 文件。
 
 ## 快速开始
 
 ```bash
-cd frontend && npm install   # 前端依赖（独立安装；Rust 侧经 .cargo/config.toml 走 rsproxy 镜像）
-npm run build          # 全量构建：frontend/dist + build/ccweb（Rust 单文件，~19MB）
-CCWEB_NO_RUST=1 npm run build   # 只出前端（开发够用）
+(cd frontend && npm install)          # 前端依赖（Rust 侧经 backend/.cargo/config.toml 走 rsproxy 镜像）
+./build.sh                            # 全量构建：frontend/dist + 根目录 ./ccweb（~19MB 单文件）
+./build.sh clean                      # 清产物：./ccweb、frontend/dist、cargo target
+CCWEB_NO_RUST=1 ./build.sh            # 只出前端（开发够用）
 
-cargo run -p ccweb-server      # Rust 后端开发跑（debug 态 dist 从磁盘读，前端重建无需重编）
-npm run dev                    # 前端开发（vite HMR）
-
-npm run deploy         # 正式部署（见下）
+(cd backend && cargo run -p ccweb-server)   # Rust 后端开发跑（debug 态 dist 从磁盘读，前端重建无需重编）
+(cd frontend && npm run dev)                # 前端开发（vite HMR）
 ```
+
+正式部署 `./build.sh deploy`（见下）。
 
 ## 部署
 
 按目标环境取用，三种形态同一份代码：
 
-- **裸跑**：`cargo run` / `target/release/ccweb-server`——开发态（dist 读磁盘）
-- **单文件**：`build/ccweb`（Rust 二进制 + 前端全量嵌入，~19MB；原 SEA 形态 137MB 的 1/7，常驻内存 ~8MB vs Node ~52MB）——拷到任何装了 claude 的机器，任意目录 `./ccweb` 即跑，无任何运行时依赖
-- **npm run deploy**：假如使用 systemd 的话（Linux 服务器常态），一条命令完成正式安装——开发目录只是源码，服务装在系统位置、与源码解耦，升级 = `npm run build && npm run deploy`：
-  1. 安装 **`/usr/local/ccweb/ccweb`**（自包含单文件；Linux 目标需 linux 构建产物）
-  2. 生成 systemd 单元（自适应 User/HOME/端口，默认 **18090**；`CCWEB_PORT=xxx npm run deploy` 改端口）→ 安装重启
-  3. 健康检查通过后输出上线确认
+- **裸跑**：`(cd backend && cargo run)`——开发态（dist 读磁盘）
+- **单文件**：根目录 `./ccweb`（./build.sh 产物，Rust 二进制 + 前端全量嵌入，~19MB；原 SEA 形态 137MB 的 1/7，常驻内存 ~8MB vs Node ~52MB；git 忽略）——拷到任何装了 claude 的机器，任意目录 `./ccweb` 即跑，无任何运行时依赖
+- **./build.sh deploy**：假如使用 systemd 的话（Linux 服务器常态），构建+安装一条命令——开发目录只是源码，服务装在系统位置、与源码解耦，升级 = 重跑 `./build.sh deploy`：
+  1. 全量构建出 Rust 单文件（Linux 目标需 linux 构建产物——目标机构建或交叉编译）
+  2. 安装 **`/usr/local/ccweb`**（自包含单文件本体）
+  3. 生成 systemd 单元（自适应 User/HOME/端口，默认 **18090**；`CCWEB_PORT=xxx ./build.sh deploy` 改端口）→ 安装重启 → 健康检查
 
 ## 与 Node 版的刻意差异（Rust 版）
 
@@ -58,7 +57,27 @@ npm run deploy         # 正式部署（见下）
 6. `PUT /api/fs/file` 的 `size` = JS UTF-16 码元数（与 Node `.length` 对齐；GET 的 `size` 为字节数——继承 Node 原有不一致）
 7. files 排序 localeCompare → 大小写不敏感字节比较（ASCII 序一致）；`/api/history` 分组顺序随文件系统枚举序（Node 同样非确定，前端按 cwd 过滤不依赖组序）
 
+## CLI 参数
+
+```bash
+./ccweb -p 18090                # 指定端口（--port=18090 等价）
+./ccweb --home /data/ws --single
+./ccweb --help                  # 完整用法；--version 查版本
+```
+
+启动横幅始终打印生效参数（含默认值），端口带来源标注：
+
+```
+[ccweb] v0.1.0  http://0.0.0.0:18090
+       port: 18090 (-p)   home: /Users/huangbin
+       claude: /usr/local/bin/claude   auth: nopass   single: off
+```
+
+优先级 **CLI > env > 默认**；无法识别的参数直接报错退出（exit 2）。
+
 ## 环境变量
+
+systemd unit 传 env 比 args 方便，env 形态全量保留（与上表 CLI 一一对应）：
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
@@ -66,7 +85,7 @@ npm run deploy         # 正式部署（见下）
 | `CCWEB_HOME` | `$HOME` | 工作区根（树根/会话 cwd 钳制边界） |
 | `CCWEB_SINGLE` | – | `=1` 发布单会话形态：至多一个活会话，前端隐藏会话切换 |
 | `CCWEB_CLAUDE` | PATH 探测 | claude 可执行文件路径覆盖 |
-| `CCWEB_NO_RUST` | – | `=1` 时 npm run build 跳过 Rust 单文件打包 |
+| `CCWEB_NO_RUST` | – | `=1` 时 ./build.sh 跳过 Rust 单文件打包 |
 
 ## 访问认证（code-server 同款语义）
 
@@ -97,23 +116,62 @@ CCWEB_AUTH=password CCWEB_PASSWORD=xxx ./ccweb   # env 形态（systemd unit 传
 spawn 恒带 `--permission-prompt-tool stdio`（CLI ≥2.1，SDK canUseTool 同款带内通道）：
 
 - **审批**：无放行清单匹配的工具调用不再被 headless 静默拒绝，而是以 `can_use_tool`
-  control_request 到达前端渲染成琥珀色授权卡片（工具名 + 入参 + 允许/拒绝）；决定经
+  control_request 到达前端渲染成琥珀色授权卡片（工具名 + **人话化参数**——command/
+  file_path 等关键字段大字展示、其余键小字 k-v，裸 JSON 仅兜底 + 允许/拒绝）；决定经
   `{"t":"perm","rid":..., "allow":...}` 回写 stdin，deny 文案会作为 tool_result 反馈给模型。
   询问帧入回放缓冲——刷新页面后未决卡片自动恢复。allow 回包按协议带原 input 作
   `updatedInput`（2.1.212 逐字实测的 wire 格式）。
-- **图片**：输入框粘贴 / 拖拽 / 回形针按钮三种入口（≤4MB/张），走 stdin
-  `source.base64` content block（`data+media_type`/`mimeType` 形态 CLI 均拒收），
-  用户气泡带 📎 徽章，历史回放同样可见。
+- **@ 文件引用**：输入框打 `@` 联想工作目录内文件/目录（可 `dir/` 逐级下钻，↑↓ 选、
+  Tab/Enter 补全），补出相对路径交模型按 cwd 解析。图片上传入口已移除（目录树支持上传；
+  stdin `source.base64` 协议面保留）。
 - **插话（steering）**：回复进行中发送的消息**不进消息流**——钉在输入框上方的
-  排队条里（可 ✕ 删除、可 ↑ 立即送出），本轮 `result` 到达时整队自动送出上屏，
-  与 CLI 轮末送达的时机一致。
+  排队条里（↑ 撤回到输入框——多条撤回按提交顺序回填，早的上面晚的下面；✕ 删除），
+  本轮 `result` 到达时整队自动送出上屏，与 CLI 轮末送达的时机一致。
 - 渲染：子代理事件（`parent_tool_use_id` 非空）缩进弱化；思考 token 增量计数
   （"思考中… ~N tokens"）；MCP 工具名 `mcp__srv__tool` 美化为 `mcp:srv/tool`。
+
+## qtom 引擎：自带的免费 agent（DeepSeek 网页版）
+
+qtom 是内置的第二引擎——一只自研的 Rust 编码猫（qkeeper 动物园第一只居民），与 claude CLI
+同等地被 spawn（stdio 说同款 stream-json 协议），模型通道走 **DeepSeek 网页版（免费）**：
+本机跑一个 dsweb daemon 用 CDP 驱动真浏览器，工具调用经实测的文本协议桥
+（`<tool_call>{"name":..,"arguments":..}</tool_call>`）翻译成标准 OpenAI tool_calls。
+装 ccweb 白送一个免费 agent，零额外安装。
+
+### 部署（三步）
+
+```bash
+# 1. 起 daemon（唯一依赖 node + ws；macOS 直接弹有头 Chrome，Linux 需 xvfb）
+cd contrib/dsweb && npm install
+PORT=8300 DSWEB_TOKEN=某随机串 node daemon.js
+#    → 弹出的浏览器里登录一次 DeepSeek（登录态持久在 ~/.dsweb/profile，之后免登）
+#    服务器长跑可 DSWEB_HEADLESS=1 无头（复用已登录 profile；登录本身需有头一次）
+
+# 2. ccweb 挂上端点（daemon 与 ccweb 同机）
+./ccweb --dsweb http://127.0.0.1:8300 --dsweb-token 某随机串   # 或 CCWEB_DSWEB_URL/CCWEB_DSWEB_TOKEN
+
+# 3. UI 底部工具栏出现「引擎」切换（🐱 qtom / Claude），切到 qtom 后「新会话」即免费 agent
+```
+
+也可终端直用：`qtom --dsweb-url http://127.0.0.1:8300 --dsweb-token t -p "看看这个目录" --yes`。
+
+### 行为与边界
+
+- 工具六件套：read_file / write_file / edit / bash / glob / grep（bash 走授权卡片，
+  文件工具不问——v1 固定策略）；路径限制在会话目录内
+- 会话恢复/历史列表/审批卡/流式渲染与 claude 引擎完全同体验（transcript 写同款
+  JSONL 格式，历史面板可回放、可 resume）
+- 单模型 deepseek-web（无模型切换）；无图片输入；usage 为估算；上下文窗口按 64k 计
+- daemon 靠 DeepSeek 网页 DOM（`.ds-message` 选择器）工作——网页改版需更新 daemon.js；
+  每请求开新会话（全量拼接），打断无害
+- qtom 二进制随 build.sh 一起产出（./qtom），部署时装在 ccweb 同目录；`CCWEB_QTOM` 可显式指路
 
 ## 测试
 
 ```bash
-npm test                                   # 端到端冒烟：入口→会话→WS→claude 回复（需 claude 可用）
-node test/resume-test.mjs <base> <sid> <cwd>   # resume 幂等/续聊验证
-cd frontend && node multi-select-test.mjs  # playwright UI 冒烟（多选/拖放/跟随等）
+node frontend/test/e2e-test.mjs http://127.0.0.1:18090/     # 端到端冒烟：入口→会话→WS→claude 回复（需 claude 可用）
+node frontend/test/resume-test.mjs <base> <sid> <cwd>       # resume 幂等/续聊验证
+node frontend/test/dsweb-stub.mjs &                         # dsweb 桩（8312，无需 DeepSeek）
+node frontend/test/qtom-e2e.mjs http://127.0.0.1:18099/     # qtom 引擎全链路：创建→流式→工具→审批→resume（ccweb 需 --dsweb 指桩）
+cd frontend && node test/multi-select-test.mjs              # playwright UI 冒烟（多选/拖放/跟随等）
 ```

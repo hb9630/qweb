@@ -1,11 +1,12 @@
-// 左栏：VSCode 风格资源管理器（目录树懒加载 + 右键菜单全功能文件管理）
-// 右键：新建文件/文件夹、上传（选择/文件夹/拖放）、下载（目录打包 tar.gz）、重命名、删除
+// 目录树浮层（chat-first 布局：从标题栏下方垂到底的辅助层）：
+// 懒加载目录树 + 右键菜单全功能文件管理（新建/上传/下载/重命名/删除/剪切粘贴）。
+// 根 = 工作目录，锁死其内（无 ".." 上溯；换工作目录唯一入口 = 标题栏左上三件套，见 ChatPanel/DirPicker）
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { API } from "./lib/api";
 import { FileGlyph } from "./lib/fileglyph";
 import { useFsEvent, watchDir } from "@/lib/fswatch";
 import {
-  ChevronRight, ChevronDown, ChevronUp, Loader2, FolderOpen, Folder, File as FileIcon, Home, RefreshCw,
+  ChevronRight, ChevronDown, ChevronUp, Loader2, FolderOpen, Folder, File as FileIcon, RefreshCw,
   FilePlus2, FolderPlus, Upload, Download, Pencil, Trash2, Scissors, Copy, ClipboardCopy, ClipboardPaste, X, Eye, EyeOff,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -103,14 +104,13 @@ function MI({ icon: Icon, label, onClick, danger, disabled, close }: {
 }
 
 export default function Explorer({
-  root, home, setRoot, onOpenFile, activeFile, onClose, onMoved,
+  root, home, onOpenFile, activeFile, onClose, onMoved,
 }: {
-  root: string;
-  home: string; // 工作区根（=环境 HOME，App 从 /api/env 拿；不写死 /root，Windows 也能跑）
-  setRoot: (p: string) => void;
+  root: string; // 工作目录 = 树根（树锁死其内，换根走标题栏）
+  home: string; // 环境 HOME（/api/env 下发；不写死 /root，Windows 也能跑）
   onOpenFile: (path: string, pinned?: boolean) => void;
   activeFile: string | null;
-  onClose?: () => void;
+  onClose?: () => void; // 树头部 X：独立收起目录树浮层（与编辑器互不影响）
   onMoved?: (moves: [string, string][]) => void; // 移动/改名成功(moves=[from,to][]),编辑器跟随更新打开路径
 }) {
   const [tree, setTree] = useState<TreeNode[]>([]);
@@ -123,7 +123,7 @@ export default function Explorer({
     try { return localStorage.getItem("ccweb.hidden") === "1"; } catch { return false; }
   });
   useEffect(() => { try { localStorage.setItem("ccweb.hidden", showHidden ? "1" : "0"); } catch {} }, [showHidden]);
-  // （工作目录选择器 picker 已移除：设定唯一入口 = 目录树右键"设为工作目录"）
+  // （工作目录的设定入口 = 标题栏左上三件套：cwd chip/历史目录/换目录选择器，见 ChatPanel 与 DirPicker）
 
   // 右键菜单 / 内联编辑 / 上传中 / 拖放目标 / 多选 / 框选
   const [ctx, setCtx] = useState<{ x: number; y: number; node: TreeNode | null; multi?: boolean } | null>(null);
@@ -140,29 +140,9 @@ export default function Explorer({
   const treeRef = useRef<TreeNode[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
   const folderRef = useRef<HTMLInputElement>(null);
-  // 浏览目标 ≠ 工作目录：树显示的根目录可自由上溯（".."），只改这里；
-  // 工作目录 root 的唯一设定入口 = 右键"设为工作目录"（树内容区一切按浏览目标算，
-  // 空白拖放/树顶刷新/内联新建都作用在所见目录上）。root 被右键设定时浏览跟随过去
-  const [browse, setBrowse] = useState(root);
-  useEffect(() => setBrowse(root), [root]);
-  const uploadDir = useRef(browse);
+  const uploadDir = useRef(root);
 
   treeRef.current = tree;
-
-  // 工作目录限制在 home 之下：界面显示相对路径。输入支持 相对 home / 绝对路径（含盘符），
-  // 解析 .. 后一律钳回 home 子树（防 /root2、../ 逃逸，越界兜底 home）
-  // 选择器路径工具：拼接/求父（Windows 盘符根 C:/ 的父 = 盘符列表 ""）
-  const joinDir = (base: string, name: string) => (base === "" ? name : base.replace(/\/+$/, "") + "/" + name);
-  const parentOfDir = (p: string): string | null => {
-    if (p === "") return null;                 // 盘符列表已是顶
-    if (p === "/") return "";                  // linux 根 → 顶（win 显示盘符/linux 回根）
-    if (/^[A-Za-z]:\/?$/.test(p)) return "";   // 盘符根 → 盘符列表
-    const trimmed = p.replace(/\/+$/, "");
-    const i = trimmed.lastIndexOf("/");
-    if (i < 0) return "";
-    const pp = i === 0 ? "/" : trimmed.slice(0, i);
-    return pp; // C:/x 的父 C:（后端 rootLevel 判定 q==="/" 或空；C: 会 readdir("C:") ✓）
-  };
 
   const listDir = useCallback(async (p: string): Promise<TreeNode[]> => {
     const r = await fetch(`${API}/fs?path=${encodeURIComponent(p)}${showHidden ? "&hidden=1" : ""}`);
@@ -200,7 +180,7 @@ export default function Explorer({
     try { saved = new Set(JSON.parse(localStorage.getItem("ccweb.expanded") || "[]")); } catch { saved = new Set(); }
     try { savedSel = JSON.parse(localStorage.getItem("ccweb.sel") || "null"); } catch {}
     (async () => {
-      let t = await listDir(browse);
+      let t = await listDir(root);
       if (saved.size) t = await restoreOpen(t, saved);
       setTree(t);
       // 选中状态恢复（路径可能在未展开层，先全量恢复；展开到那层自然显示选中样式）
@@ -211,7 +191,7 @@ export default function Explorer({
         treeBoxRef.current?.focus();
       }
     })();
-  }, [browse, listDir]);
+  }, [root, listDir]);
 
   // 选中持久化：sel 变化即写（anchor 一并记录，恢复时"当前项"深底白字不丢）
   useEffect(() => {
@@ -229,7 +209,7 @@ export default function Explorer({
   };
 
   const reloadDir = useCallback(async (dir: string) => {
-    if (dir === browse) {
+    if (dir === root) {
       // 整树重建必须带回展开状态(现树展开 ∪ 持久化),否则手工刷新会把树收平
       const open = new Set<string>();
       const walkOpen = (nodes: TreeNode[]) => nodes.forEach((n) => {
@@ -237,7 +217,7 @@ export default function Explorer({
       });
       walkOpen(treeRef.current);
       try { for (const p of JSON.parse(localStorage.getItem("ccweb.expanded") || "[]")) open.add(p); } catch {}
-      treeRef.current = await restoreOpen(await listDir(browse), open);
+      treeRef.current = await restoreOpen(await listDir(root), open);
       setTree(treeRef.current);
       return;
     }
@@ -254,7 +234,7 @@ export default function Explorer({
       }));
     treeRef.current = await walk(treeRef.current);
     setTree(treeRef.current);
-  }, [browse, listDir]);
+  }, [root, listDir]);
 
   // ---- 文件变更自动刷新（零轮询）：订阅当前展开目录，事件定向 reloadDir ----
   // cb 经 ref 取最新 reloadDir（依赖 showHidden 会变）；目录集合序列化作 effect key，
@@ -263,13 +243,13 @@ export default function Explorer({
   reloadRef.current = reloadDir;
   useFsEvent(useCallback((dirs) => { for (const d of dirs) reloadRef.current(d); }, []));
   const openDirsKey = useMemo(() => {
-    const out: string[] = [browse];
+    const out: string[] = [root];
     const walk = (ns: TreeNode[]) => ns.forEach((n) => {
       if (n.dir && n.open) { out.push(n.path); walk(n.children || []); }
     });
     walk(tree);
     return out.join("\n");
-  }, [tree, browse]);
+  }, [tree, root]);
   useEffect(() => {
     const un = openDirsKey.split("\n").map((d) => watchDir(d));
     return () => un.forEach((f) => f());
@@ -390,7 +370,7 @@ export default function Explorer({
     }
     if (errs.length) setErr("部分删除失败：" + errs.join("；"));
     setSel(new Set());
-    await reloadDir(browse);
+    await reloadDir(root);
   };
   // 可视扁平序（shift 范围选/键盘导航用）
   const visiblePaths = useCallback(() => {
@@ -439,8 +419,7 @@ export default function Explorer({
       const n = findNode(anchorRef.current);
       if (!n) return;
       e.preventDefault();
-      if (n.dir && n.open) toggle(n);
-      else if (n.path !== root) setCursor(parentOf(n.path));
+      if (n.dir && n.open) toggle(n); // 树锁死工作目录内：← 只收起，不再上跳父级
     } else if (e.key === "F2") {
       const n = findNode(anchorRef.current);
       if (n && sel.size === 1) { e.preventDefault(); setEdit({ dir: parentOf(n.path), kind: "rename", oldPath: n.path }); }
@@ -644,7 +623,9 @@ export default function Explorer({
 
   return (
     <aside
-      className="relative flex w-full select-none flex-col bg-card/30"
+      // min-h-0：浮层 wrapper 是列向 flex、aside 是其主轴子项——不钳 min-height:auto
+      // 会被长树内容顶破浮层高度（树区 flex-1 overflow-y-auto 随之失去滚动）
+      className="relative flex min-h-0 w-full select-none flex-col bg-card/30"
       onContextMenu={(e) => {
         // stopPropagation：防冒泡到 window 关菜单监听（否则开着菜单时空白右键会被立即关掉，"第一次不灵"）
         e.preventDefault(); e.stopPropagation();
@@ -658,9 +639,9 @@ export default function Explorer({
         // (文件行/目录行均已 stopPropagation,能到这里的只有真空白)
         const kp = e.dataTransfer.getData("kp");
         if (kp) {
-          const paths: string[] = JSON.parse(kp).filter((p: string) => p !== browse);
-          if (paths.length) moveInto(paths, browse);
-        } else doUpload(browse, e.dataTransfer.files);
+          const paths: string[] = JSON.parse(kp).filter((p: string) => p !== root);
+          if (paths.length) moveInto(paths, root);
+        } else doUpload(root, e.dataTransfer.files);
       }}
     >
       <div className="flex items-center gap-1 px-3 py-2 text-[0.625rem] font-semibold uppercase tracking-wider text-muted-foreground">
@@ -673,7 +654,7 @@ export default function Explorer({
             {showHidden ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3" />}
           </button>
           <button className="rounded p-0.5 hover:bg-accent" title="刷新"
-            onClick={() => reloadDir(browse)}>
+            onClick={() => reloadDir(root)}>
             <RefreshCw className={cn("h-3 w-3", uploading && "animate-spin")} />
           </button>
           {onClose && (
@@ -684,31 +665,6 @@ export default function Explorer({
           )}
         </span>
       </div>
-      {/* 路径栏：显示树的浏览目标（不一定是工作目录）。
-          browse = root（常态）：Home 灰色只读，右键目录才是设定工作目录的唯一入口；
-          browse ≠ root（上溯浏览中）：Home 主色可点，一键跳回工作目录 */}
-      <div className="mx-2 mb-1 flex items-center gap-1 rounded-md bg-background/70 px-2 py-1.5"
-        title={browse === root
-          ? "工作目录（目录树右键更改）"
-          : `浏览中：${browse}（非工作目录；点击 Home 回到 ${root}，右键目录可设为工作目录）`}>
-        {browse === root ? (
-          <Home className="h-3 w-3 shrink-0 text-muted-foreground" />
-        ) : (
-          <button className="rounded p-0.5 -m-0.5 hover:bg-accent" title={`回到工作目录 ${root}`}
-            onClick={() => setBrowse(root)}>
-            <Home className="h-3 w-3 shrink-0 text-primary" />
-          </button>
-        )}
-        <span className="min-w-0 flex-1 truncate font-mono text-[0.6875rem] text-foreground/90">{browse}</span>
-      </div>
-      {/* ".." 上移一级只换浏览目标，不动工作目录 */}
-      {!!parentOfDir(browse) && (
-        <button className="mb-1 flex items-center gap-1 rounded-sm py-[3px] pr-2 pl-2 text-left text-xs text-muted-foreground hover:bg-foreground/10 hover:text-foreground"
-          title={`上一级（仅浏览）：${parentOfDir(browse)}`}
-          onClick={() => setBrowse(parentOfDir(browse) || "/")}>
-          <span className="text-base font-bold leading-none">..</span>
-        </button>
-      )}
       {err && <ErrToast msg={err} clear={() => setErr("")} />}
       <div
         ref={treeBoxRef}
@@ -749,7 +705,7 @@ export default function Explorer({
           window.addEventListener("mouseup", up);
         }}
       >
-        {edit && edit.dir === browse && edit.kind !== "rename" && (
+        {edit && edit.dir === root && edit.kind !== "rename" && (
           <EditRow icon={editIcon(edit.kind)} initial="" onOk={submitEdit} onCancel={() => setEdit(null)} />
         )}
         {tree.map((n) => renderNode(n, 0))}
@@ -762,9 +718,9 @@ export default function Explorer({
             e.preventDefault(); e.stopPropagation(); setBlankDrag(false);
             const kp = e.dataTransfer.getData("kp");
             if (kp) {
-              const paths: string[] = JSON.parse(kp).filter((p: string) => p !== browse);
-              if (paths.length) moveInto(paths, browse);
-            } else doUpload(browse, e.dataTransfer.files);
+              const paths: string[] = JSON.parse(kp).filter((p: string) => p !== root);
+              if (paths.length) moveInto(paths, root);
+            } else doUpload(root, e.dataTransfer.files);
           }}
         />
         {!tree.length && !err && <p className="p-3 text-center text-[0.625rem] text-muted-foreground/70">空目录</p>}
@@ -815,7 +771,6 @@ export default function Explorer({
               </>
             ) : n?.dir ? (
               <>
-                <MI close={() => setCtx(null)} icon={Home} label="设为工作目录" onClick={() => setRoot(n.path)} />
                 <MI close={() => setCtx(null)} icon={ClipboardCopy} label="拷贝路径" onClick={() => copyPaths([n.path])} />
                 {/* 容器管理暂缓（2026-11-06 定案：改 SSH 直连去 keeperd，这版先出），菜单项已删 */}
                 <MI close={() => setCtx(null)} icon={Scissors} label="剪切" onClick={() => setClip({ mode: "cut", paths: [n.path] })} />

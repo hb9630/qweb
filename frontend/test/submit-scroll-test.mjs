@@ -1,0 +1,15 @@
+import { chromium } from "playwright";
+const b = await chromium.launch(); const pg = await b.newPage({ viewport: { width: 1280, height: 900 } });
+await pg.goto("http://127.0.0.1:18095/"); await pg.waitForTimeout(4000);
+const ta = pg.locator("textarea").first();
+const el = await pg.locator(".relative.overflow-y-hidden > div").first().elementHandle();
+const atB = () => el.evaluate((e) => e.scrollHeight - e.scrollTop - e.clientHeight < 60);
+const top = () => el.evaluate((e) => Math.round(e.scrollTop));
+await pg.mouse.move(1000, 450); await pg.mouse.wheel(0, -2000); await pg.waitForTimeout(600);
+const t1 = await top();
+console.log(t1 > 100 ? `上翻离底: top=${t1} 贴底=${await atB()}` : `（上翻不足: top=${t1}）`);
+await ta.fill("ok"); await ta.press("Enter"); await pg.waitForTimeout(1000);
+console.log((await atB()) ? `✓ 提交即自动贴底（top=${await top()}）` : `✗ 未贴底（top=${await top()}）`);
+const list = await (await fetch("http://127.0.0.1:18095/api/sessions")).json();
+for (const s of list) await fetch(`http://127.0.0.1:18095/api/sessions/${s.id}`, { method: "DELETE" });
+await b.close(); process.exit(0);

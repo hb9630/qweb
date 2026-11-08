@@ -1,0 +1,13 @@
+import { chromium } from "playwright";
+const b = await chromium.launch(); const pg = await b.newPage();
+await pg.goto("http://127.0.0.1:18095/"); await pg.waitForTimeout(2500);
+const ta = pg.locator("textarea").first();
+await ta.fill("召回测试甲"); await ta.press("Enter"); await pg.waitForTimeout(2500);
+await ta.click(); await pg.waitForTimeout(200);
+await ta.press("ArrowUp"); await pg.waitForTimeout(250);
+console.log("↑:", JSON.stringify(await ta.inputValue()));
+await ta.press("ArrowDown"); await pg.waitForTimeout(250);
+console.log("↓ 越界还原:", JSON.stringify(await ta.inputValue()));
+const list = await (await fetch("http://127.0.0.1:18095/api/sessions")).json();
+for (const s of list) await fetch(`http://127.0.0.1:18095/api/sessions/${s.id}`, { method: "DELETE" });
+await b.close(); process.exit(0);

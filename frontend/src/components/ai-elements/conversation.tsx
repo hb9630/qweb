@@ -16,7 +16,9 @@ export const Conversation = ({ className, ...props }: ConversationProps) => (
     // initial 必须instant：挂载/重挂时从 scrollTop=0 平滑滚到底，长会话肉眼可见
     // "从上到下整个刷一遍"（历史→resume 提交、页面刷新都会重挂）；直接落底无扫屏
     initial="instant"
-    resize="smooth"
+    // resize 也必须 instant：smooth 弹簧在工具调用大爆发时跟不上内容增速 → 与底部
+    // 距离拉开 → 库判定"逃逸"永久停止跟随（表现为跑一会儿不自动滚到底）
+    resize="instant"
     role="log"
     {...props}
   />

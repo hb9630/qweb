@@ -194,43 +194,11 @@ export default function Editor({
     setImgZoom((z) => { const o: Record<string, number> = {}; for (const [k, v] of Object.entries(z)) o[remap(k)] = v; return o; });
   }, [movedReq?.seq]);
 
-  // 外部请求打开文件（seq 变化即触发，同路径重复请求用于钉住）
-  useEffect(() => {
-    if (!openReq) return;
-    const { path, pinned } = openReq;
-    if (tabs.some((t) => t.path === path)) {
-      setActive(path);
-      if (pinned) setPreview((p) => (p === path ? null : p));
-      return;
-    }
-    const hot = !pinned && Date.now() - lastOpenAt.current <= 1000;
-    lastOpenAt.current = Date.now();
-    const name = path.split("/").pop() || path;
-    const tab: Tab = { path, name, original: "", content: "", binary: false, size: 0, loading: true, saving: false };
-    setTabs((ts) => {
-      // 热打开：替换现有预览标签的原位置（不新增 tab）；冷打开/pinned 追加新 tab
-      const i = hot ? ts.findIndex((t) => t.path === preview) : -1;
-      if (i >= 0) { const next = [...ts]; next[i] = tab; return next; }
-      return [...ts, tab];
-    });
-    if (!pinned) setPreview(path);
-    setActive(path);
-    fetch(`${API}/fs/file?path=${encodeURIComponent(path)}`)
-      .then((r) => r.json())
-      .then((d) => {
-        setTabs((ts) => ts.map((t) => t.path === path
-          ? { ...t, loading: false, binary: !!d.binary, size: d.size ?? 0,
-              original: d.content ?? "", content: d.content ?? "",
-              error: d.error ? String(d.error) : undefined }
-          : t));
-        onOpened?.();
-      })
-      .catch(() => setTabs((ts) => ts.map((t) => t.path === path ? { ...t, loading: false, error: "网络错误" } : t)));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [openReq?.seq]);
-
   // 刷新恢复：从 localStorage 读上次打开的文件列表，重建 tabs 并逐个拉取内容
   // （内容以磁盘为准重新加载，未保存的修改不持久化）
+  // 必须定义在"打开请求"effect 之前：chat-first 布局编辑器默认卸载、点文件才挂载，
+  // 挂载那一拍若本恢复 effect 排在后（replace 覆盖 append）会把刚点的文件吞掉；
+  // 排在前则打开 effect 的幂等兜底（updater 内查重）保证同文件不重复开
   useEffect(() => {
     try {
       const saved = JSON.parse(localStorage.getItem("ccweb.tabs") || "null");
@@ -254,6 +222,44 @@ export default function Editor({
       }
     } catch {}
   }, []);
+
+  // 外部请求打开文件（seq 变化即触发，同路径重复请求用于钉住）
+  useEffect(() => {
+    if (!openReq) return;
+    const { path, pinned } = openReq;
+    if (tabs.some((t) => t.path === path)) {
+      setActive(path);
+      if (pinned) setPreview((p) => (p === path ? null : p));
+      return;
+    }
+    const hot = !pinned && Date.now() - lastOpenAt.current <= 1000;
+    lastOpenAt.current = Date.now();
+    const name = path.split("/").pop() || path;
+    const tab: Tab = { path, name, original: "", content: "", binary: false, size: 0, loading: true, saving: false };
+    setTabs((ts) => {
+      // 幂等兜底：上面的闭包查重用的是本拍渲染的 tabs（挂载竞跑/连点时是旧值），
+      // updater 里再查一道——同路径绝不重复入列
+      if (ts.some((t) => t.path === path)) return ts;
+      // 热打开：替换现有预览标签的原位置（不新增 tab）；冷打开/pinned 追加新 tab
+      const i = hot ? ts.findIndex((t) => t.path === preview) : -1;
+      if (i >= 0) { const next = [...ts]; next[i] = tab; return next; }
+      return [...ts, tab];
+    });
+    if (!pinned) setPreview(path);
+    setActive(path);
+    fetch(`${API}/fs/file?path=${encodeURIComponent(path)}`)
+      .then((r) => r.json())
+      .then((d) => {
+        setTabs((ts) => ts.map((t) => t.path === path
+          ? { ...t, loading: false, binary: !!d.binary, size: d.size ?? 0,
+              original: d.content ?? "", content: d.content ?? "",
+              error: d.error ? String(d.error) : undefined }
+          : t));
+        onOpened?.();
+      })
+      .catch(() => setTabs((ts) => ts.map((t) => t.path === path ? { ...t, loading: false, error: "网络错误" } : t)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openReq?.seq]);
 
   // tabs 变化即持久化（挂载时的空态写入会被恢复后的重渲染立即覆盖，无碍）
   useEffect(() => {
@@ -332,6 +338,13 @@ export default function Editor({
     };
   }, [ctx]);
   const closeAll = () => { setTabs([]); setActive(null); setPreview(null); };
+  // 最后一个 tab 关掉（单个关/全部关）后自动收起编辑器面板；空面板打开不触发（hadTabs 守卫）
+  const hadTabs = useRef(false);
+  useEffect(() => {
+    if (tabs.length) hadTabs.current = true;
+    else if (hadTabs.current) onClose?.();
+    hadTabs.current = tabs.length > 0;
+  }, [tabs.length]);
 
   const zoom = cur ? imgZoom[cur.path] ?? 1 : 1;
   const setZoom = (z: number) => cur && setImgZoom((m) => ({ ...m, [cur.path]: Math.min(32, Math.max(0.25, z)) }));
@@ -385,7 +398,9 @@ export default function Editor({
   })()));
 
   return (
-    <div className="flex min-w-0 flex-1 flex-col bg-background">
+    // min-h-0：chat-first 浮层 wrapper 是列向 flex，本根是其主轴子项——不钳的话
+    // min-height:auto 会被 CM 长文档顶破浮层高度（旧布局走交叉轴 stretch 无此问题）
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background">
       {/* Tab 栏（tabs 区可滚动，X 关闭钮固定右侧不随滚动） */}
       <div className="flex h-9 shrink-0 items-stretch bg-card/40">
         <div className="flex min-w-0 flex-1 items-stretch overflow-x-auto">

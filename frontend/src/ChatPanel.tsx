@@ -1,6 +1,9 @@
-// 右栏：对话面板（AI Elements 官方 example-chatbot 风格）
+// 对话面板（AI Elements 官方 example-chatbot 风格）——chat-first 布局的底层主角：
+// 铺满全宽（App 侧 absolute inset-0），头部即全局标题栏（左上三件套：cwd chip 开关目录树 /
+// ▾ 历史工作目录 / 换目录选择器 DirPicker）。目录树/编辑器浮层由 App 叠在本层之上。
 // 支持两种形态：live 会话（WS 双向）与只读历史回放（/api/history/{id}）
-import { useEffect, useReducer, useRef, useState, useCallback, useMemo } from "react";
+import { useEffect, useLayoutEffect, useReducer, useRef, useState, useCallback, useMemo } from "react";
+import type { StickToBottomContext } from "use-stick-to-bottom";
 import { Conversation, ConversationContent, ConversationScrollButton } from "@/components/ai-elements/conversation";
 import { Message, MessageContent, MessageResponse } from "@/components/ai-elements/message";
 import { Reasoning, ReasoningContent, ReasoningTrigger } from "@/components/ai-elements/reasoning";
@@ -10,10 +13,11 @@ import {
   PromptInputFooter, PromptInputTools, PromptInputSubmit,
 } from "@/components/ai-elements/prompt-input";
 import { cn } from "@/lib/utils";
-import { BASE } from "@/lib/api";
+import { API, BASE, setHashSid } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { CircleStop, FolderOpen, History, Plus, MessageSquare, RefreshCw, Loader2, X, Check, Shrink, Eraser, Zap, ListTodo, FilePen, Sparkles, FastForward, ShieldAlert, Ban, Paperclip, ArrowUp, Clock } from "lucide-react";
+import { CircleStop, FolderOpen, History, Plus, MessageSquare, RefreshCw, Loader2, X, Check, Shrink, Eraser, Zap, ListTodo, FilePen, Sparkles, FastForward, ShieldAlert, Ban, Paperclip, ArrowUp, Clock, Copy, ChevronDown, FolderSync, Cat, File as FileIcon } from "lucide-react";
+import DirPicker from "./DirPicker";
 import type { UIBlock } from "./types";
 
 interface State { blocks: UIBlock[]; busy: boolean; alive: boolean; connected: boolean; model: string; permMode: string; slashCmds: string[]; ctxAbs?: number; thinkTokens: number }
@@ -38,11 +42,8 @@ const MODES = [
 // 模型建议兜底（正常应使用 /api/env 下发的、从 claude settings 推导的列表）：
 // 别名由 CLI 经 ANTHROPIC_DEFAULT_*_MODEL 解析，恒有效；任意 ID 仍可自由输入（代理端校验）
 const MODEL_PRESETS = ["sonnet", "opus", "haiku", "default"];
-// 无 live 会话（历史回放）时的斜杠命令兜底列表（live init.slash_commands 会覆盖）
-const FALLBACK_SLASH = [
-  "agents", "auto-mode-setup", "autocompact", "clear", "color", "compact", "config",
-  "context", "effort", "fast", "focus", "init", "insights", "mcp", "model", "output-style", "rename", "usage",
-];
+// 斜杠命令无兜底死列表：真清单只来自 live 会话 init.slash_commands（含 skills）；
+// 无会话/未启动时如实提示，不放假数据误导
 const SLASH_DESC: Record<string, string> = {
   compact: "压缩上下文", model: "查看/切换模型", effort: "思考力度", clear: "清屏",
   usage: "用量统计", context: "上下文详情", agents: "子代理", mcp: "MCP 服务器",
@@ -80,7 +81,13 @@ function toolState(b: Extract<UIBlock, { k: "tool" }>) {
   return "input-available";
 }
 
-export function ccReducer(s: State, a: Action): State {
+// 块稳定 id：render key 用（位置键在窗口移动时整列 remount，滚动锚定失效）。
+// 计数器挂 globalThis：Fast Refresh 重跑模块不清零——清零后新块 bid 与旧块撞 key，
+// 消息列表闪烁、块互相顶掉（仅开发态热替换触发，但正是调试时的日常路径）
+const nextBid = () => ((globalThis as any).__ccwebBID = ((globalThis as any).__ccwebBID ?? 0) + 1);
+
+// 不 export：此文件要保持"仅组件导出"，Fast Refresh 才能热替换（多一个非组件导出就退化成整页刷新）
+function ccReducer(s: State, a: Action): State {
   switch (a.t) {
     // WS 连上即进程存活：历史面板（alive 初始 false）被原地升级为 live 时不重挂，
     // alive 只能靠这里恢复，否则 send 会一直被"进程已退出"拦掉
@@ -91,11 +98,11 @@ export function ccReducer(s: State, a: Action): State {
       if (s.blocks.length) return s;
       return a.events.reduce((st: State, ev: any) => ccReducer(st, { t: "cc", ev }), s);
     case "exit": return { ...s, alive: false, busy: false };
-    case "user": return { ...s, blocks: [...s.blocks, { k: "user", text: a.text, ...(a.imgs ? { imgs: a.imgs } : {}) }], busy: true };
+    case "user": return { ...s, blocks: [...s.blocks, { bid: nextBid(), k: "user", text: a.text, ...(a.imgs ? { imgs: a.imgs } : {}) }], busy: true };
     // 审批决定本地落账（WS 回包照发；重复/迟到回包 CLI 侧自会忽略）
     case "perm":
       return { ...s, blocks: s.blocks.map((b) => b.k === "ask" && b.rid === a.rid ? { ...b, done: a.allow ? "allow" as const : "deny" as const } : b) };
-    case "note": return { ...s, blocks: [...s.blocks, { k: "note", text: a.text }] };
+    case "note": return { ...s, blocks: [...s.blocks, { bid: nextBid(), k: "note", text: a.text }] };
     case "clear": return { ...s, blocks: [], partial: null };
     case "cc": {
       const ev = a.ev;
@@ -121,7 +128,7 @@ export function ccReducer(s: State, a: Action): State {
       if (ev.type === "control_response") {
         const r = ev.response ?? {};
         if (r.subtype === "error")
-          return { ...s, blocks: [...blocks, { k: "note", text: `操作失败：${r.error}` }] };
+          return { ...s, blocks: [...blocks, { bid: nextBid(), k: "note", text: `操作失败：${r.error}` }] };
         const out = r.response ?? {};
         if (typeof out.model === "string") return { ...s, model: out.model };
         if (typeof out.mode === "string") return { ...s, permMode: out.mode };
@@ -133,6 +140,7 @@ export function ccReducer(s: State, a: Action): State {
         const r = ev.request ?? {};
         if (r.subtype === "can_use_tool") {
           return { ...s, blocks: [...blocks, {
+            bid: nextBid(),
             k: "ask", rid: String(ev.request_id ?? ""), tuid: String(r.tool_use_id ?? ""),
             tool: String(r.tool_name ?? r.display_name ?? "?"),
             inputJson: JSON.stringify(r.input ?? {}, null, 2),
@@ -152,7 +160,7 @@ export function ccReducer(s: State, a: Action): State {
         if (e.type === "message_start") s = { ...s, thinkTokens: 0 };
         if (e.type === "content_block_start") {
           const b = e.content_block;
-          if (b?.type === "tool_use") blocks.push({ k: "tool", id: b.id, name: b.name, inputJson: "", live: true });
+          if (b?.type === "tool_use") blocks.push({ bid: nextBid(), k: "tool", id: b.id, name: b.name, inputJson: "", live: true });
           return { ...s, blocks };
         }
         if (e.type === "content_block_delta") {
@@ -160,10 +168,10 @@ export function ccReducer(s: State, a: Action): State {
           const L = last();
           if (d.type === "text_delta" && d.text) {
             if (L && L.k === "text" && L.live) blocks[blocks.length - 1] = { ...L, text: L.text + d.text };
-            else blocks.push({ k: "text", text: d.text, live: true });
+            else blocks.push({ bid: nextBid(), k: "text", text: d.text, live: true });
           } else if (d.type === "thinking_delta" && d.thinking) {
             if (L && L.k === "think" && L.live) blocks[blocks.length - 1] = { ...L, text: L.text + d.thinking };
-            else blocks.push({ k: "think", text: d.thinking, live: true });
+            else blocks.push({ bid: nextBid(), k: "think", text: d.thinking, live: true });
           } else if (d.type === "input_json_delta" && d.partial_json) {
             if (L && L.k === "tool" && L.live) blocks[blocks.length - 1] = { ...L, inputJson: L.inputJson + d.partial_json };
           }
@@ -179,10 +187,10 @@ export function ccReducer(s: State, a: Action): State {
         const first = blocks.findIndex((b: any) => b.live);
         const finals: UIBlock[] = [];
         for (const c of ev.message?.content ?? []) {
-          if (c.type === "text") finals.push({ k: "text", text: c.text, sub });
-          else if (c.type === "thinking") finals.push({ k: "think", text: c.thinking, sub });
+          if (c.type === "text") finals.push({ bid: nextBid(), k: "text", text: c.text, sub });
+          else if (c.type === "thinking") finals.push({ bid: nextBid(), k: "think", text: c.thinking, sub });
           else if (c.type === "tool_use")
-            finals.push({ k: "tool", id: c.id, name: c.name, inputJson: JSON.stringify(c.input, null, 2) ?? "", sub });
+            finals.push({ bid: nextBid(), k: "tool", id: c.id, name: c.name, inputJson: JSON.stringify(c.input, null, 2) ?? "", sub });
         }
         const kept = blocks.filter((b: any) => !b.live);
         if (first < 0) kept.push(...finals);
@@ -205,7 +213,7 @@ export function ccReducer(s: State, a: Action): State {
           if (cn && L && L.k === "user" && L.text.trim().startsWith(cn[1].trim()))
             return { ...s, blocks };
           if (!(L && L.k === "user" && L.text === text.trim())) {
-            blocks.push({ k: "user", text: text.trim(), ...(nImg ? { imgs: nImg } : {}) });
+            blocks.push({ bid: nextBid(), k: "user", text: text.trim(), ...(nImg ? { imgs: nImg } : {}) });
           }
           return { ...s, blocks };
         }
@@ -231,6 +239,13 @@ export function ccReducer(s: State, a: Action): State {
         rememberCtxWin(ev.modelUsage);
         const u = ev.usage ?? {};
         const usedAbs = (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0);
+        // 窗口自校正：占用显著超过推定窗口（>5%）说明分母低估（中转剥了 [1m] 标记又不在
+        // env 清单里）——按 1M 记忆该模型，ctx% 不再虚超 100%
+        const mName = normModel(ev.model ?? s.model);
+        try {
+          if (usedAbs > ctxWindowOf(mName, null, null) * 1.05)
+            localStorage.setItem(`ccweb.ctxwin.${mName}`, "1000000");
+        } catch {}
         // 窗口推定（modelUsage→localStorage→hints→默认）移到渲染处：见 ctxPct 派生注释
         // 单调防抖：上下文只增不减（compact/clear 已各自重置），防网关 usage 偶发波动。
         // ctx% 不在这里定格：分母信息渐进到达（见渲染处派生注释）
@@ -249,6 +264,14 @@ const THINK_INLINE_MAX = 600;
 function ThinkBlock({ b }: { b: Extract<UIBlock, { k: "think" }> }) {
   const [open, setOpen] = useState(!!b.live);
   const [zoom, setZoom] = useState(false);
+  const zoomRef = useRef<HTMLDivElement>(null);
+  // 浮窗打开默认滚到底：思考流式追加，最新内容在末尾（打开时总想看"想到哪了"）
+  useEffect(() => {
+    if (zoom) requestAnimationFrame(() => {
+      const el = zoomRef.current;
+      if (el) el.scrollTop = el.scrollHeight;
+    });
+  }, [zoom]);
   const over = b.text.length > THINK_INLINE_MAX;
   return (
     <Reasoning open={open} onOpenChange={setOpen} hasContent={!!b.text}
@@ -259,7 +282,7 @@ function ThinkBlock({ b }: { b: Extract<UIBlock, { k: "think" }> }) {
       {over && open && (
         <button className="ml-4 mt-1 block text-[0.6875rem] text-primary/80 underline-offset-2 hover:underline"
           onClick={() => setZoom(true)}>
-          查看全部 {b.text.length} 字（浮窗）
+          查看全部 {b.text.length} 字
         </button>
       )}
       <Dialog open={zoom} onOpenChange={setZoom}>
@@ -267,7 +290,7 @@ function ThinkBlock({ b }: { b: Extract<UIBlock, { k: "think" }> }) {
           <DialogHeader>
             <DialogTitle className="text-sm">思考过程 · {b.text.length} 字</DialogTitle>
           </DialogHeader>
-          <div className="max-h-[70vh] overflow-y-auto whitespace-pre-wrap break-words rounded-md bg-muted/40 p-3 font-mono text-xs leading-relaxed">
+          <div ref={zoomRef} className="max-h-[70vh] overflow-y-auto whitespace-pre-wrap break-words rounded-md bg-muted/40 p-3 font-mono text-xs leading-relaxed">
             {b.text}
           </div>
         </DialogContent>
@@ -279,10 +302,63 @@ function ThinkBlock({ b }: { b: Extract<UIBlock, { k: "think" }> }) {
 // 本地命令输出（/model 等）带 <local-command-stdout>…</local-command-stdout> 包裹标签，展示时剥掉只留内容
 const stripCmdTags = (t: string) => t.replace(/<\/?local-command-(?:stdout|stderr)>/g, "").trim();
 
+// 拷贝到剪贴板：优先 clipboard API（需安全上下文），非 https 退 execCommand（Explorer 同款）
+async function copyTextUtil(text: string) {
+  try {
+    if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); return true; }
+  } catch {}
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+    document.body.append(ta); ta.select();
+    const ok = document.execCommand("copy");
+    ta.remove();
+    return ok;
+  } catch { return false; }
+}
+
+// 程序化写入输入框：PromptInput 的 value prop 只做初始值，控制器内部 state 才是真源，
+// 外部 setInput 到不了输入框——直接写 DOM 并派发 input 事件走 onChange 链（控制器/镜像态全同步）
+const setTaValue = (v: string, caret: number | "end") => {
+  const ta = document.querySelector("textarea[name='message']") as HTMLTextAreaElement | null;
+  if (!ta) return;
+  ta.value = v;
+  ta.dispatchEvent(new Event("input", { bubbles: true }));
+  requestAnimationFrame(() => {
+    const p = caret === "end" ? v.length : caret;
+    ta.setSelectionRange(p, p);
+  });
+};
+
+// 消息右下角复制按钮：hover 所属消息时浮现（半悬浮在气泡底边上）
+function CopyBtn({ text }: { text: string }) {
+  const [ok, setOk] = useState(false);
+  return (
+    <button
+      className="absolute bottom-0 right-0 flex translate-y-1/2 items-center gap-1 rounded-md border border-border/70 bg-popover px-1.5 py-0.5 text-[0.625rem] text-muted-foreground opacity-0 shadow-sm transition-opacity hover:text-foreground group-hover/msg:opacity-100"
+      title="复制全文"
+      onMouseDown={(e) => e.stopPropagation()}
+      onClick={async (e) => {
+        e.stopPropagation();
+        setOk(await copyTextUtil(text));
+        setTimeout(() => setOk(false), 1500);
+      }}>
+      {ok ? <Check className="h-3 w-3 text-primary" /> : <Copy className="h-3 w-3" />}
+    </button>
+  );
+}
+
 // MCP 工具名美化：mcp__server__tool → mcp:server/tool（type 保持原名，仅展示层改名）
 const toolLabel = (n: string) => n.startsWith("mcp__") ? `mcp:${n.slice(5).replace(/__/g, "/")}` : n;
 
-// 权限询问卡片：pending 态可裁决；done 后塌缩成一行结果
+// 权限询问卡片：pending 态可裁决；done 后塌缩成一行结果。
+// 参数人话化：优先字段（command/file_path/…）大字展示，其余键小字 k-v 一行一个；
+// 解析失败或无键可读才退回裸 JSON（避免一上来就是一坨 json 的观感）
+const ASK_KEY_LABEL: Record<string, string> = {
+  command: "命令", file_path: "文件", path: "路径", notebook_path: "笔记本",
+  url: "网址", pattern: "匹配", prompt: "提示词", description: "说明", query: "查询",
+  script: "脚本", code: "代码", edits: "编辑内容", content: "内容", old_string: "原文本", new_string: "新文本",
+};
 function AskBlock({ b, canAct, onRespond }: {
   b: Extract<UIBlock, { k: "ask" }>;
   canAct: boolean;
@@ -296,15 +372,46 @@ function AskBlock({ b, canAct, onRespond }: {
         已{b.done === "allow" ? "允许" : "拒绝"} · {toolLabel(b.tool)}
       </div>
     );
+  // 参数拆解：主字段（第一个命中的优先键）+ 其余键
+  let input: any = null;
+  try { input = JSON.parse(b.inputJson || "{}"); } catch {}
+  const flat = input && typeof input === "object" && !Array.isArray(input)
+    ? Object.entries(input).filter(([, v]) => v !== undefined && v !== null && v !== "") : [];
+  const mainKey = flat.find(([k]) => ASK_KEY_LABEL[k] && typeof (input as any)[k] === "string")?.[0];
+  const mainVal = mainKey ? String((input as any)[mainKey]) : null;
+  const rest = flat.filter(([k]) => k !== mainKey);
   return (
     <div className="my-1.5 w-full rounded-lg border border-amber-500/50 bg-amber-500/10 p-3">
       <div className="flex items-center gap-1.5 text-xs font-medium text-amber-700 dark:text-amber-300">
         <ShieldAlert className="h-3.5 w-3.5 shrink-0" />
         {toolLabel(b.tool)} 请求授权
       </div>
-      <pre className="mt-1.5 max-h-44 overflow-auto whitespace-pre-wrap break-all rounded bg-muted/50 p-2 font-mono text-[0.6875rem] leading-relaxed text-foreground/80">
-        {b.inputJson}
-      </pre>
+      {mainVal != null ? (
+        <>
+          <div className="mt-1.5 text-[0.625rem] text-muted-foreground">{ASK_KEY_LABEL[mainKey]}</div>
+          <pre className="mt-0.5 max-h-28 overflow-auto whitespace-pre-wrap break-all rounded bg-muted/50 p-2 font-mono text-[0.6875rem] leading-relaxed text-foreground/90">
+            {mainVal}
+          </pre>
+        </>
+      ) : null}
+      {rest.length > 0 && (
+        <div className="mt-1.5 flex max-h-28 flex-col gap-0.5 overflow-y-auto">
+          {rest.map(([k, v]) => {
+            const s = typeof v === "string" ? v : JSON.stringify(v);
+            return (
+              <div key={k} className="flex min-w-0 items-baseline gap-1.5 text-[0.6875rem]">
+                <span className="shrink-0 text-muted-foreground">{ASK_KEY_LABEL[k] ?? k}</span>
+                <span className="min-w-0 flex-1 truncate font-mono text-foreground/70" title={s}>{s}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {!mainVal && !rest.length && (
+        <pre className="mt-1.5 max-h-44 overflow-auto whitespace-pre-wrap break-all rounded bg-muted/50 p-2 font-mono text-[0.6875rem] leading-relaxed text-foreground/80">
+          {b.inputJson}
+        </pre>
+      )}
       <div className="mt-2 flex items-center gap-2">
         <Button size="sm" type="button" disabled={!canAct} onClick={() => onRespond(b.rid, true)}>允许</Button>
         <Button size="sm" type="button" variant="outline" disabled={!canAct} onClick={() => onRespond(b.rid, false)}>拒绝</Button>
@@ -322,19 +429,25 @@ function BlockView({ b, canAct, onRespond }: {
   if (b.k === "user")
     return (
       <Message from="user" className="ml-0 justify-start">
-        <MessageContent className="rounded-lg border border-primary/30 bg-primary/10 px-3 py-2">
-          {stripCmdTags(b.text)}
-          {!!b.imgs && <span className="ml-1.5 shrink-0 align-middle text-[0.625rem] text-muted-foreground" title={`${b.imgs} 张图片`}>📎{b.imgs}</span>}
-        </MessageContent>
+        <div className="group/msg relative">
+          <MessageContent className="rounded-lg border border-primary/30 bg-primary/10 px-3 py-2 whitespace-pre-wrap break-words">
+            {stripCmdTags(b.text)}
+            {!!b.imgs && <span className="ml-1.5 shrink-0 align-middle text-[0.625rem] text-muted-foreground" title={`${b.imgs} 张图片`}>📎{b.imgs}</span>}
+          </MessageContent>
+          <CopyBtn text={stripCmdTags(b.text)} />
+        </div>
       </Message>
     );
   if (b.k === "text")
     return (
       <Message from="assistant" className={cn("justify-start", b.sub && "pl-6 opacity-75")}>
-        <MessageContent>
-          <MessageResponse>{stripCmdTags(b.text)}</MessageResponse>
-          {b.live && <span className="animate-pulse text-muted-foreground">▍</span>}
-        </MessageContent>
+        <div className="group/msg relative w-full">
+          <MessageContent>
+            <MessageResponse>{stripCmdTags(b.text)}</MessageResponse>
+            {b.live && <span className="animate-pulse text-muted-foreground">▍</span>}
+          </MessageContent>
+          <CopyBtn text={stripCmdTags(b.text)} />
+        </div>
       </Message>
     );
   if (b.k === "think") return <div className={b.sub ? "pl-6 opacity-75" : undefined}><ThinkBlock b={b} /></div>;
@@ -357,11 +470,12 @@ function BlockView({ b, canAct, onRespond }: {
 
 export default function ChatPanel({
   session, historyEvents, histGroups, onResume, onNewSession, onOpenHistory, onRefreshHistory, onToggleHistory,
-  notice, onDismissNotice, root, models,
+  notice, onDismissNotice, root, models, home, treeOpen, onToggleTree, onSwitchRoot, chatInset = 0,
   initialEvents, pendingText, initModel,
+  engines, enginePref, onEnginePref,
 }: {
-  session?: { id: string; cwd: string };
-  historyEvents?: { id: string; cwd: string; events: any[] };
+  session?: { id: string; cwd: string; engine?: string | null };
+  historyEvents?: { id: string; cwd: string; events: any[]; resumeSid?: string | null };
   initialEvents?: any[];
   pendingText?: string;
   initModel?: string;
@@ -375,10 +489,23 @@ export default function ChatPanel({
   onDismissNotice?: () => void;
   root?: string;
   models?: string[];
+  engines?: { id: string; label: string }[]; // 可用引擎（后端 /api/env；qtom 配置 --dsweb 后出现）
+  enginePref?: string; // 下次新会话引擎（localStorage 记忆）
+  onEnginePref?: (id: string) => void;
+  home?: string; // 环境 HOME（标题栏 cwd 显示 ~/ 相对路径用）
+  treeOpen?: boolean; // 目录树浮层开合（chip 高亮反馈）
+  onToggleTree?: () => void; // cwd chip 点击 = 开/关目录树浮层
+  onSwitchRoot?: (p: string) => void; // 换工作目录（历史下拉/DirPicker 选定共用，App.setWorkspace）
+  chatInset?: number; // 浮层组总宽：内容列/输入框在剩余可见区居中（0 = 无浮层，屏幕居中）
 }) {
   const live = !!session;
+  // qtom 引擎（自家 Rust 猫）：无模型切换/权限模式/图片/TUI-resume（`claude --resume` 对它无意义）
+  const isQtom = session?.engine === "qtom";
   const sid = session?.id ?? historyEvents?.id ?? "";
   const cwd = session?.cwd ?? historyEvents?.cwd ?? "";
+  const [tuiCopied, setTuiCopied] = useState(false);
+  // 新会话连接早于首条消息时 App 拿不到 claude_sid——init 事件到达时本地补记（TUI 续跑按钮用）
+  const [initSid, setInitSid] = useState<string | null>(null);
   // env 模型清单 → ctx 窗口提示（带 [1m] 的归一名；历史恢复无 modelUsage 时兜底 1M）
   useEffect(() => {
     ctxWinHints.clear();
@@ -387,13 +514,21 @@ export default function ChatPanel({
   // 模式/模型弹出菜单（锚定输入框左下）
   const [menu, setMenu] = useState<null | "mode" | "model">(null);
   const [modelInput, setModelInput] = useState("");
+  // 标题栏左上三件套的弹出层：▾ 历史工作目录 / 换目录选择器（互斥，同时只开一个）
+  const [hdrMenu, setHdrMenu] = useState<null | "recents" | "picker">(null);
+  const recents = (() => {
+    try { return JSON.parse(localStorage.getItem("ccweb.recents") || "[]") as string[]; } catch { return []; }
+  })();
+  // cwd 显示：home 子树内 ~/ 相对，外面绝对路径
+  const relPath = (p: string) =>
+    home && p === home ? "~" : home && p.startsWith(home + "/") ? "~" + p.slice(home.length) : p;
   // 历史浮层：锚定按钮位置向上展开（记录按钮相对面板的坐标）
   const [view, setView] = useState<"chat" | "history">("chat");
   const [histPos, setHistPos] = useState<{ left: number; bottom: number } | null>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const histBtnRef = useRef<HTMLButtonElement>(null);
-  // 历史严格跟随左树（工作目录 root）——树是目录的唯一事实源，不跟会话 cwd 走
-  // （resume 别的目录的会话时面板 cwd 会偏离 root，历史浮层仍按树显示）
+  // 历史严格跟随工作目录（root，标题栏三件套唯一设定）——不跟会话 cwd 走
+  // （resume 别的目录的会话时面板 cwd 会偏离 root，历史浮层仍按工作目录显示）
   const cwdGroups = (histGroups ?? []).filter((g: any) => g.cwd === root);
   const toggleHistory = () => {
     if (view === "history") { setView("chat"); setHistPos(null); return; }
@@ -419,21 +554,142 @@ export default function ChatPanel({
   // 算好存住会在早到的 result 上拿 200k 兜底算错（1M 会话虚高 5 倍）且永不更新。
   // 官方口径（statusline 文档）：分子三项之和不含 output，分母完整 context window
   const ctxPct = s.ctxAbs == null ? null
-    : Math.round((s.ctxAbs / ctxWindowOf(s.model || "", null, null)) * 100);
+    : Math.min(100, Math.round((s.ctxAbs / ctxWindowOf(s.model || "", null, null)) * 100));
+
+  // ---- 滚动三件套：尾部优先渲染 / 上翻加载更早 / 后台跟随 ----
+  // 1) 先只渲染最近 N 条（历史回放/重连大缓冲挂载即落底，无整屏扫过）
+  // 2) 用户上翻后冻结起始下标（floor）：流式新增不推走正在读的窗口；回到底部自动解冻
+  const [histWin, setHistWin] = useState<{ limit: number; floor: number | null }>({ limit: 40, floor: null });
+  const histStart = histWin.floor ?? Math.max(0, s.blocks.length - histWin.limit);
+  const histStartRef = useRef(histStart);
+  histStartRef.current = histStart; // 滚动监听单次注册，经 ref 读最新值
+  const stickCtx = useRef<StickToBottomContext | null>(null);
+  // 跟随兜底：处于贴底态时任何内容变化（新块/流式增量/工具结果爆发）同步落底——
+  // 不依赖库的 resize 跟随（工具大爆发场景偶发停止跟随）
+  const followRef = useRef(true);
+  // 滚动监听必须挂库的内层滚动元素（Content 的 scrollRef；scroll 事件不冒泡，
+  // 外层容器上的 onScroll 收不到）。贴底解冻 / 触顶加载更早；
+  // 加载后视口稳定交给浏览器原生滚动锚定（overflow-anchor 未被禁用，勿手动补偿——会双重调整）
+  useEffect(() => {
+    const el = stickCtx.current?.scrollRef.current;
+    if (!el) return;
+    const h = () => {
+      followRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48; // 跟随态供贴底兜底
+      if (el.scrollHeight - el.scrollTop - el.clientHeight < 48) {
+        // 贴底：解冻回跟随窗口（尾部 40 条 + 滚动跟随）
+        setHistWin((w) => (w.floor === null ? w : { ...w, floor: null }));
+      } else if (el.scrollTop < 120 && histStartRef.current > 0) {
+        // 触顶：向上补一页（40 条）
+        setHistWin((w) => w.floor !== null
+          ? { ...w, floor: Math.max(0, w.floor - 40) }
+          : { ...w, limit: w.limit + 40 });
+      } else {
+        // 一离底就冻结窗口起点：流式新增不再推走正在读的内容
+        // （否则 busy 中窗口随新消息前滑，向上翻永远追不到顶）；回底自动解冻
+        setHistWin((w) => (w.floor === null && histStartRef.current > 0
+          ? { ...w, floor: histStartRef.current }
+          : w));
+      }
+    };
+    el.addEventListener("scroll", h, { passive: true });
+    // 兜底：已钉在顶端时滚轮不再产生 scroll 事件（scrollTop 无法变化），wheel 上翻直接触发补页
+    const onWheel = (we: WheelEvent) => {
+      if (we.deltaY < 0 && el.scrollTop < 120 && histStartRef.current > 0) h();
+    };
+    el.addEventListener("wheel", onWheel, { passive: true });
+    return () => { el.removeEventListener("scroll", h); el.removeEventListener("wheel", onWheel); };
+  }, []);
+  // 贴底兜底本体：blocks 一变（流式 delta/新块）且跟随态 → 绘制前同步落底
+  useLayoutEffect(() => {
+    const el = stickCtx.current?.scrollRef.current;
+    if (el && followRef.current) el.scrollTop = el.scrollHeight;
+  }, [s.blocks]);
+  // 异步高度变化兜底：代码块语法高亮/图片加载等晚一拍撑高（不经 blocks state），
+  // ResizeObserver 盯内容元素——跟随态下任何来源的增高都落底
+  useEffect(() => {
+    const ctx = stickCtx.current;
+    const sc = ctx?.scrollRef.current;
+    const ce = ctx?.contentRef.current;
+    if (!sc || !ce) return;
+    const ro = new ResizeObserver(() => { if (followRef.current) sc.scrollTop = sc.scrollHeight; });
+    ro.observe(ce);
+    return () => ro.disconnect();
+  }, []);
+  // 发送即贴底：解冻历史窗口 + 瞬时落底（上翻阅读中发送，新消息在视口外就看不到回复）
+  const jumpToBottom = useCallback(() => {
+    setHistWin((w) => (w.floor === null ? w : { ...w, floor: null }));
+    stickCtx.current?.scrollToBottom("instant");
+  }, []);
+  // 3) 后台跟随：tab 隐藏时 rAF 暂停、跟随积压；切回可见的一瞬直接落底（先于绘制，无滚动动画）
+  useEffect(() => {
+    const h = () => {
+      if (document.visibilityState !== "visible") return;
+      const ctx = stickCtx.current;
+      if (ctx?.isAtBottom) {
+        const el = ctx.scrollRef.current;
+        if (el) el.scrollTop = el.scrollHeight;
+      }
+    };
+    document.addEventListener("visibilitychange", h);
+    return () => document.removeEventListener("visibilitychange", h);
+  }, []);
   const wsRef = useRef<WebSocket | null>(null);
   const [input, setInput] = useState("");
+  // 输入框高度：null=自动（field-sizing 随内容长高，上限 50vh）；拖分割条后=固定高（内容超出内部滚动），
+  // 双击分割条回自动。拖拽只记起点+起高，pointermove 里算差值。
+  const [inputH, setInputH] = useState<number | null>(null);
+  const inputDrag = useRef<{ y: number; h: number } | null>(null);
   // 插话队列：busy 时发送不进消息流、不写 stdin——钉在输入框上方，
   // 轮末（result 到达）自动整队送出，或用户 ↑ 立即送出 / ✕ 删除。
-  // 只在本客户端持有（UI 态，不跨端同步；刷新丢失可接受）
+  // 按会话持久化（localStorage）：刷新/重开标签不丢——轮还没结束恢复后接着等 result；
+  // 轮已结束则重连回放里的 result 直接触发送出（对"轮末送出"的承诺诚实）。
+  // 未送达的消息只存在于此（CLI 无感知），不跨端同步。
   interface SteerItem { id: number; text: string; urls: string[] }
-  const [steerQ, setSteerQ] = useState<SteerItem[]>([]);
+  const steerSeq = useRef(0);
+  const steerKey = session ? `ccweb.steer.${session.claudeSid ?? session.id}` : null;
+  const [steerQ, setSteerQ] = useState<SteerItem[]>(() => {
+    if (!steerKey) return [];
+    try {
+      const saved = JSON.parse(localStorage.getItem(steerKey) || "[]");
+      if (!Array.isArray(saved) || !saved.length) return [];
+      const items = saved.map((x: any, i: number) =>
+        ({ id: i + 1, text: String(x.text ?? ""), urls: Array.isArray(x.urls) ? x.urls : [] }));
+      steerSeq.current = items.length;
+      return items;
+    } catch { return []; }
+  });
+  // 队列变化即落盘（空=清键）；图片 dataURL 可能撑爆配额——退化重写为纯文本
+  useEffect(() => {
+    if (!steerKey) return;
+    try {
+      if (!steerQ.length) { localStorage.removeItem(steerKey); return; }
+      const plain = steerQ.map(({ text, urls }) => ({ text, urls }));
+      try { localStorage.setItem(steerKey, JSON.stringify(plain)); }
+      catch {
+        localStorage.setItem(steerKey, JSON.stringify(steerQ.map(({ text }) => ({ text, urls: [] }))));
+      }
+    } catch {}
+  }, [steerQ, steerKey]);
   const steerQRef = useRef(steerQ);
   steerQRef.current = steerQ;
-  const steerSeq = useRef(0);
+  // 输入历史召回：光标在首位按 ↑ 取上一条（bash 同款）；↓ 在末尾前进，越界还原草稿。
+  // localStorage 持久化：刷新后 ↑ 仍能召回（含已排队未送的插话）
+  const inputHist = useRef<string[]>((() => {
+    try {
+      const a = JSON.parse(localStorage.getItem("ccweb.inputhist") || "[]");
+      return Array.isArray(a) ? a.filter((x: any) => typeof x === "string").slice(-100) : [];
+    } catch { return []; }
+  })());
+  const histNavIdx = useRef(-1);
+  const histDraft = useRef("");
   // 待发图片（data URL，粘贴/拖拽/选择三种入口；后端解析 data: 前缀转 base64 块）
   const [imgs, setImgs] = useState<{ url: string; name: string }[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
   const addFiles = useCallback((files: Iterable<File>) => {
+    if (isQtom) { // qtom 无图片输入（网页版 DeepSeek 文本协议桥）
+      dispatch({ t: "note", text: "qtom 引擎暂不支持图片附件" });
+      return;
+    }
     for (const f of files) {
       if (!f.type.startsWith("image/")) continue;
       if (f.size > 4 * 1024 * 1024) {
@@ -444,7 +700,7 @@ export default function ChatPanel({
       r.onload = () => setImgs((p) => [...p, { url: String(r.result), name: f.name }]);
       r.readAsDataURL(f);
     }
-  }, []);
+  }, [isQtom]);
   // ctrl 请求在途中（set_model 需后端连代理校验，数秒）：chip 上转圈，control_response 到达即清
   const [ctrlPend, setCtrlPend] = useState<null | "mode" | "model">(null);
   useEffect(() => {
@@ -483,6 +739,7 @@ export default function ChatPanel({
         ws.onmessage = (m) => {
           const msg = JSON.parse(m.data);
           if (msg.t === "cc") {
+            if (msg.ev?.type === "system" && msg.ev?.subtype === "init" && msg.ev?.session_id) setInitSid(msg.ev.session_id);
             if (msg.ev?.type === "control_response") setCtrlPend(null); // 回包到达，停转圈
             // 轮末送出插话队列（CLI 对轮后新消息照常处理；本地块与 CLI 回显去重见 reducer）
             if (msg.ev?.type === "result" && steerQRef.current.length && ws.readyState === 1) {
@@ -493,6 +750,11 @@ export default function ChatPanel({
               setSteerQ([]);
             }
             dispatch({ t: "cc", ev: msg.ev });
+          }
+          else if (msg.t === "pre" && msg.events?.length) {
+            // 恢复前历史（resume 会话 buf 只含恢复后事件）：replay 动作的"已有内容跳过"
+            // 守卫会与挂载时注入的 transcript initialEvents 自动去重
+            dispatch({ t: "replay", events: msg.events });
           }
           else if (msg.t === "exit") { dead = true; dispatch({ t: "exit" }); }
         };
@@ -510,19 +772,46 @@ export default function ChatPanel({
     if (!s.alive) { dispatch({ t: "note", text: "进程已退出，请新建会话" }); return; }
     if (!s.connected) { dispatch({ t: "note", text: "连接断开（自动重连中），稍候再发" }); return; }
     const t = text.trim();
+    // 输入历史入列（↑ 召回用）：连续重复只记一次；落盘（刷新后仍可召回）
+    const h = inputHist.current;
+    if (t && h[h.length - 1] !== t) {
+      h.push(t);
+      if (h.length > 100) h.shift();
+      try { localStorage.setItem("ccweb.inputhist", JSON.stringify(h)); } catch {}
+    }
+    histNavIdx.current = -1;
     const urls = imgs.map((i) => i.url);
     // busy 中 = 插话：钉在输入框上方排队（轮末自动送出），不进消息流
     if (s.busy) {
       setSteerQ((q) => [...q, { id: ++steerSeq.current, text: t || "（图片）", urls }]);
       setInput("");
       setImgs([]);
+      jumpToBottom();
       return;
     }
     wsRef.current?.send(JSON.stringify({ t: "user", text: t, images: urls }));
+    jumpToBottom();
     dispatch({ t: "user", text: t || "（图片）", ...(urls.length ? { imgs: urls.length } : {}) });
     setInput("");
     setImgs([]);
   }, [s.connected, s.alive, s.busy, imgs]);
+
+  // 撤回排队消息回输入框：多条撤回按提交顺序排（早的上面、晚的下面）。
+  // 已撤回的文本段用 withdrawnRef 跟踪；若草稿末尾仍是"上次撤回块"整体，则剥掉重排
+  // （乱序点撤回也能还原提交顺序），用户改过草稿则退化为普通追加
+  const withdrawnRef = useRef<Map<number, string>>(new Map());
+  const withdrawSteer = useCallback((it: { id: number; text: string }) => {
+    const cur = (document.querySelector("textarea[name='message']") as HTMLTextAreaElement | null)?.value ?? "";
+    const sorted = (m: Map<number, string>) => [...m.entries()].sort((a, b) => a[0] - b[0]).map(([, t]) => t);
+    const prevBlock = sorted(withdrawnRef.current).join("\n");
+    withdrawnRef.current.set(it.id, it.text);
+    let base = cur;
+    if (prevBlock && cur.endsWith(prevBlock)) base = cur.slice(0, -prevBlock.length).replace(/\n$/, "");
+    const all = sorted(withdrawnRef.current);
+    writeTa(base ? base + "\n" + all.join("\n") : all.join("\n"), "end");
+    setSteerQ((q) => q.filter((x) => x.id !== it.id));
+  }, []);
+  useEffect(() => { if (!steerQ.length) withdrawnRef.current.clear(); }, [steerQ.length]);
 
   // 队列单条"立即送出"：写 stdin（CLI 排队）+ 本地上屏（用户主动送上去）
   const sendSteerNow = useCallback((id: number) => {
@@ -532,7 +821,8 @@ export default function ChatPanel({
     wsRef.current.send(JSON.stringify({ t: "user", text: it.text, images: it.urls }));
     dispatch({ t: "user", text: it.text, ...(it.urls.length ? { imgs: it.urls.length } : {}) });
     setSteerQ((q) => q.filter((x) => x.id !== id));
-  }, []);
+    jumpToBottom();
+  }, [jumpToBottom]);
 
   // 审批裁决：WS 下发 + 本地落账（重复/迟到回包 CLI 侧自会忽略）
   const respondPerm = useCallback((rid: string, allow: boolean) => {
@@ -577,28 +867,82 @@ export default function ChatPanel({
     }
   }, []);
 
+  // 程序化写输入框（联想补全/撤回/历史召回共用）：setInput 驱动受控 value（React 重渲染），
+  // setTaValue 即时写 DOM + 定光标。两轨并行——派发 input 事件进不了 React onChange，
+  // 只写 DOM 的话镜像态（联想过滤等）不跟随
+  const writeTa = (v: string, caret: number | "end" = "end") => { setInput(v); setTaValue(v, caret); };
+
   // ---- 斜杠命令联想：输入 / 前缀（未带空格/参数）即弹出 ----
   const [slashIdx, setSlashIdx] = useState(0);
   const [slashOff, setSlashOff] = useState(false); // Esc 关闭后不再弹，直到输入变化
   const slashOpenRef = useRef(false); // 供 window 捕获阶段的 ESC 监听读取（先关联想再打断）
   const slashList = useMemo(() => {
     const m = /^\/([a-zA-Z0-9_-]*)$/.exec(input.trim());
-    if (!m) return null;
-    const pool = (s.slashCmds.length ? s.slashCmds : FALLBACK_SLASH)
-      .filter((c) => c.toLowerCase().startsWith(m[1].toLowerCase()));
-    return pool.length ? pool.slice(0, 12) : null;
+    if (!m || !s.slashCmds.length) return null; // 无真清单：不出列表（提示语见弹层）
+    const pool = s.slashCmds.filter((c) => c.toLowerCase().startsWith(m[1].toLowerCase()));
+    return pool.length ? pool : null; // 全量给（弹层内滚动，不再截 12 条）
   }, [input, s.slashCmds]);
-  const slashOpen = !!slashList && !slashOff;
+  // 弹层可见：有命中列表，或"没有真清单"时的如实提示（输 /zzz 过滤无命中则不弹）
+  const slashOpen = !slashOff && (!!slashList || (!s.slashCmds.length && !!/^\/[a-zA-Z0-9_-]*$/.test(input.trim())));
   slashOpenRef.current = slashOpen;
   const slashIdxC = Math.min(slashIdx, Math.max(0, (slashList?.length ?? 1) - 1));
-  const onInput = (v: string) => { setInput(v); setSlashOff(false); setSlashIdx(0); };
-  const pickSlash = (c: string) => { setInput("/" + c + " "); setSlashOff(false); };
+  const onInput = (v: string) => { setInput(v); setSlashOff(false); setSlashIdx(0); setAtOff(false); setAtIdx(0); };
+  const pickSlash = (c: string) => { writeTa("/" + c + " "); setSlashOff(false); };
+
+  // ---- @ 文件引用联想：行首/空白后输入 @（可 dir/ 逐级下钻）弹出工作目录内条目 ----
+  // 图片上传入口已移除（目录树支持上传）；引用文件用 @ 联想补全相对路径，模型按 cwd 解析
+  const [atIdx, setAtIdx] = useState(0);
+  const [atOff, setAtOff] = useState(false); // Esc 关闭后不再弹，直到输入变化
+  const atOpenRef = useRef(false); // ESC 守卫同 slashOpenRef（先关联想再打断）
+  const atToken = useMemo(() => {
+    const m = /(?:^|\s)@([^\s@]*)$/.exec(input);
+    return m ? m[1] : null; // 如 "src/ap"（dir 前缀 + 过滤词）
+  }, [input]);
+  const atQuery = useMemo(() => {
+    if (atToken == null) return null;
+    const i = atToken.lastIndexOf("/");
+    return { dir: i < 0 ? "" : atToken.slice(0, i + 1), q: i < 0 ? atToken : atToken.slice(i + 1) };
+  }, [atToken]);
+  const [atDir, setAtDir] = useState<{ dir: string; dirs: string[]; files: string[] } | null>(null);
+  useEffect(() => {
+    if (atToken == null || atOff) { setAtDir(null); return; }
+    const rel = atQuery?.dir ?? "";
+    const full = rel ? (root || "/").replace(/\/+$/, "") + "/" + rel.replace(/^\/+|\/+$/g, "") : root || "/";
+    let dead = false;
+    fetch(`${API}/fs?path=${encodeURIComponent(full)}`)
+      .then((r) => r.json())
+      .then((d: any) => { if (!dead && Array.isArray(d.dirs)) setAtDir({ dir: rel, dirs: d.dirs, files: (d.files ?? []).map((f: any) => f.name) }); })
+      .catch(() => {});
+    return () => { dead = true; };
+    // 只随下钻目录重新拉取；过滤词纯本地筛
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [atToken == null || atOff ? null : atQuery?.dir, root]);
+  const atList = useMemo(() => {
+    if (atToken == null || atOff || !atDir) return null;
+    const q = (atQuery?.q ?? "").toLowerCase();
+    const items = [
+      ...atDir.dirs.filter((n) => n.toLowerCase().includes(q)).map((n) => ({ n, dir: true })),
+      ...atDir.files.filter((n) => n.toLowerCase().includes(q)).map((n) => ({ n, dir: false })),
+    ];
+    return items.length ? items.slice(0, 14) : null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [atToken, atOff, atDir, atQuery?.q]);
+  const atOpen = !!atList;
+  atOpenRef.current = atOpen;
+  const atIdxC = Math.min(atIdx, Math.max(0, (atList?.length ?? 1) - 1));
+  const pickAt = (item: { n: string; dir: boolean }) => {
+    if (atToken == null) return;
+    // 末尾 @token 整体替换；目录补 "dir/" 继续下钻（联想不关），文件补 "path " 收尾（token 破坏即自然关闭）
+    const base = input.replace(/@[^\s@]*$/, "");
+    writeTa(base + "@" + (atQuery?.dir ?? "") + item.n + (item.dir ? "/" : " "));
+    setAtIdx(0);
+  };
 
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
-      // 联想浮层开着时 ESC 只关浮层（textarea 的 onKeyDown 负责），不打断会话
-      if (slashOpenRef.current) return;
+      // 联想浮层（斜杠 / @）开着时 ESC 只关浮层（textarea 的 onKeyDown 负责），不打断会话
+      if (slashOpenRef.current || atOpenRef.current) return;
       // Dialog 浮窗（思考全文等）开着时 ESC 只关浮窗：不拦默认行为，交给 radix；
       // 这里 preventDefault 会挡掉 radix 的关闭逻辑
       if (document.querySelector("[role='dialog']")) return;
@@ -617,6 +961,15 @@ export default function ChatPanel({
     return () => window.removeEventListener("mousedown", h);
   }, [menu]);
 
+  // 标题栏弹出层（▾ 历史 / 换目录）：点空白关闭。Esc 关闭走各自组件的 keydown
+  //（recents 面板同样带 role="dialog"——ChatPanel 全局 Esc 处理器见此即放行）
+  useEffect(() => {
+    if (!hdrMenu) return;
+    const h = () => setHdrMenu(null);
+    window.addEventListener("mousedown", h);
+    return () => window.removeEventListener("mousedown", h);
+  }, [hdrMenu]);
+
 
   // 会话标题：首句用户提问前 20 字（与 resume/历史列表同源），占位把消息列表往下压
   const firstUser: any = s.blocks.find((b: any) => b.k === "user");
@@ -624,28 +977,101 @@ export default function ChatPanel({
     ? String(firstUser.text).replace(/\s+/g, " ").trim().slice(0, 20)
     : live ? "新会话" : "（空会话）";
 
+  // 终端续跑命令：TUI 的 resume 列表不收 SDK/stream-json 会话（无 ai-title 索引），
+  // cd 到工作目录 + 官方 sid 直连是唯一入口；一键复制给"ccweb 功能不全时切 TUI 继续"
+  const claudeSid = session?.claudeSid ?? initSid ?? historyEvents?.resumeSid;
+  // 新会话 init 到达才有官方 sid——此刻补写 URL 锚点（App 侧只在已知 sid 的路径写）
+  useEffect(() => { if (claudeSid) setHashSid(claudeSid); }, [claudeSid]);
+  const tuiCmd = !isQtom && claudeSid && cwd ? `cd ${cwd} && claude --resume ${claudeSid}` : "";
+
   return (
     <div ref={hostRef} className="relative flex h-full flex-col">
-      {/* 会话标题栏（居中；左角常驻显示会话工作目录，右角悬浮 X） */}
+      {/* 全局标题栏（chat-first：本面板头部横贯全宽；左上三件套，标题居中，无关闭 X——对话不可关） */}
       <div className="flex h-8 shrink-0 items-center justify-center border-b border-border/40 bg-card/40 px-10">
-        {cwd && (
-          <span className="absolute left-2 flex min-w-0 max-w-[38%] items-center gap-1 font-mono text-[0.625rem] text-muted-foreground/70" title={`claude 工作目录：${cwd}`}>
+        {/* 三件套：cwd chip（点击开关目录树浮层）/ ▾ 历史工作目录 / 换目录选择器。
+            按钮 mousedown stopPropagation：弹出层开着时点按钮本身不触发"点空白关闭"再被 onClick 重开 */}
+        <div className="absolute left-2 flex items-center gap-0.5">
+          <button
+            className={cn("flex min-w-0 max-w-[30vw] items-center gap-1 rounded px-1.5 py-0.5 font-mono text-[0.625rem] transition-colors hover:bg-accent",
+              treeOpen ? "bg-accent text-accent-foreground" : "text-muted-foreground")}
+            title={`工作目录：${root || "—"}（点击${treeOpen ? "收起" : "展开"}目录树）`}
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={() => { setHdrMenu(null); onToggleTree?.(); }}>
             <FolderOpen className="h-3 w-3 shrink-0" />
-            <span className="truncate">{cwd}</span>
+            <span className="truncate">{root ? relPath(root) : "（未设定）"}</span>
+          </button>
+          <button
+            className={cn("rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground",
+              hdrMenu === "recents" && "bg-accent text-accent-foreground")}
+            title="历史工作目录（快速切换）"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={() => setHdrMenu((v) => (v === "recents" ? null : "recents"))}>
+            <ChevronDown className="h-3 w-3" />
+          </button>
+          <button
+            className={cn("flex items-center gap-1 rounded px-1 py-0.5 text-[0.625rem] text-muted-foreground hover:bg-accent hover:text-foreground",
+              hdrMenu === "picker" && "bg-accent text-accent-foreground")}
+            title="换工作目录（选择器自由导航；换目录 = 开新会话）"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={() => setHdrMenu((v) => (v === "picker" ? null : "picker"))}>
+            <FolderSync className="h-3 w-3" />换目录
+          </button>
+        </div>
+        {/* 标题 + 紧随其后的终端续跑复制按钮（整体居中） */}
+        <span className="flex min-w-0 max-w-full items-center gap-1">
+          <span className="min-w-0 truncate text-xs font-medium text-foreground/80" title={firstUser ? firstUser.text : title}>
+            {title}
           </span>
-        )}
-        <span className="min-w-0 max-w-full truncate text-xs font-medium text-foreground/80" title={firstUser ? firstUser.text : title}>
-          {title}
+          {tuiCmd && (
+            <button
+              className="shrink-0 rounded p-0.5 text-muted-foreground/60 hover:bg-accent hover:text-foreground"
+              title={`复制终端续跑命令（在 TUI 里继续本会话）：${tuiCmd}`}
+              onClick={async () => {
+                setTuiCopied(await copyTextUtil(tuiCmd));
+                setTimeout(() => setTuiCopied(false), 1500);
+              }}>
+              {tuiCopied ? <Check className="h-3 w-3 text-primary" /> : <Copy className="h-3 w-3" />}
+            </button>
+          )}
         </span>
       </div>
-      {/* 换工作目录系统提示：明确"新会话=新 claude 实例"（历史消息在官方 transcript，可 resume 续聊） */}
+      {/* 换工作目录系统提示：明确"新会话=新 claude 实例"（历史消息在官方 transcript，可 resume 续聊）。
+          z-30：浮层组(z-20)从标题栏下方展开，notice 若不盖在其上会被树遮住左半 */}
       {notice && (
-        <div className="flex h-7 shrink-0 items-center gap-2 border-b border-primary/20 bg-primary/10 px-3 text-[0.6875rem] text-foreground/80">
+        <div className="relative z-30 flex h-7 shrink-0 items-center gap-2 border-b border-primary/20 bg-primary/10 px-3 text-[0.6875rem] text-foreground/80">
           <FolderOpen className="h-3 w-3 shrink-0 text-primary/70" />
           <span className="min-w-0 flex-1 truncate">{notice}</span>
           <button className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground" title="关闭提示" onClick={() => onDismissNotice?.()}>
             <X className="h-3 w-3" />
           </button>
+        </div>
+      )}
+      {/* ▾ 历史工作目录（快速切换；当前目录打勾，点选即换 = 开新会话） */}
+      {hdrMenu === "recents" && (
+        <div role="dialog"
+          className="absolute left-2 top-9 z-40 w-72 rounded-md border border-border bg-popover py-1 text-xs shadow-xl"
+          onMouseDown={(e) => e.stopPropagation()}>
+          <div className="px-3 py-1 text-[0.625rem] font-semibold uppercase tracking-wider text-muted-foreground">历史工作目录</div>
+          {recents.length ? recents.map((p) => (
+            <button key={p}
+              className="flex w-full items-center gap-1.5 px-3 py-1.5 text-left hover:bg-accent/60"
+              title={p}
+              onClick={() => { setHdrMenu(null); if (p !== root) onSwitchRoot?.(p); }}>
+              <FolderOpen className="h-3 w-3 shrink-0 opacity-60" />
+              <span className="min-w-0 flex-1 truncate font-mono text-[0.6875rem]">{relPath(p)}</span>
+              {p === root && <Check className="h-3 w-3 shrink-0 text-primary" />}
+            </button>
+          )) : (
+            <p className="p-3 text-center text-muted-foreground/70">暂无历史（换过工作目录后记录于此）</p>
+          )}
+        </div>
+      )}
+      {/* 换目录选择器（DirPicker：面包屑自由导航 + ✓ 确认；选定 = setWorkspace = 开新会话 + 树扎根并展开） */}
+      {hdrMenu === "picker" && (
+        <div className="absolute left-2 top-9 z-40" onMouseDown={(e) => e.stopPropagation()}>
+          <DirPicker home={home || ""} current={root || ""}
+            onPick={(p) => { setHdrMenu(null); onSwitchRoot?.(p); }}
+            onClose={() => setHdrMenu(null)} />
         </div>
       )}
       {/* 历史浮层：从历史按钮位置向上展开；只显示当前目录的会话；点空白/选择后关闭 */}
@@ -676,58 +1102,166 @@ export default function ChatPanel({
           {!cwdGroups.length && <p className="p-3 text-center text-xs text-muted-foreground/70">此目录暂无历史</p>}
         </div>
       )}
-      <Conversation className="flex-1">
+      {/* chatInset = 浮层组总宽：内容列在剩余可见区居中（paddingLeft 缩小可用宽度，mx-auto 随之偏移） */}
+      <Conversation className="flex-1" contextRef={stickCtx} style={{ paddingLeft: chatInset }}>
         <ConversationContent className="mx-auto w-full max-w-5xl px-5 pt-6 pb-2">
-          {s.blocks.map((b, i) => <BlockView key={i} b={b} canAct={live && s.connected && s.alive} onRespond={respondPerm} />)}
-          {live && s.busy && (
-            <div className="flex items-center gap-2 px-1 py-2 text-xs text-muted-foreground">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              {s.blocks.some((b: any) => b.k === "ask" && !b.done)
-                ? "等待授权…"
-                : s.blocks.some((b: any) => b.live)
-                  ? "回复中…"
-                  : s.thinkTokens > 0 ? `思考中… ~${s.thinkTokens} tokens` : "思考中…"}
+          {histStart > 0 && (
+            <div className="pb-1 text-center text-[0.625rem] text-muted-foreground/60">
+              ↑ 上面还有 {histStart} 条，向上滚动加载
             </div>
           )}
+          {s.blocks.slice(histStart).map((b) => <BlockView key={b.bid} b={b} canAct={live && s.connected && s.alive} onRespond={respondPerm} />)}
+          {/* 底部状态行常驻占位（min-h-8 = 图标行满高）：busy 结束只隐去内容不收行，消息列表不跳动 */}
+          <div className="flex min-h-8 items-center gap-2 px-1 text-xs text-muted-foreground">
+            {s.busy && (
+              <>
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                {s.blocks.some((b: any) => b.k === "ask" && !b.done)
+                  ? "等待授权…"
+                  : s.blocks.some((b: any) => b.live)
+                    ? "回复中…"
+                    : s.thinkTokens > 0 ? `思考中… ~${s.thinkTokens} tokens` : "思考中…"}
+              </>
+            )}
+          </div>
         </ConversationContent>
-        <ConversationScrollButton />
+        {/* 滚到底箭头：库内 left-50% 按全宽居中——浮层避让时补 marginLeft 半宽，
+            使箭头在消息列（可见区）内居中 */}
+        <ConversationScrollButton style={{ marginLeft: chatInset ? chatInset / 2 : 0 }} />
       </Conversation>
 
-      {/* 统一工具条（输入框上方）：历史 · 新会话 · 压缩 · 清除（模式/模型/ctx 在输入框内） */}
-      <div className="flex h-9 shrink-0 bg-card/40 text-[0.6875rem] text-muted-foreground">
-        <div className="mx-auto flex w-full max-w-5xl items-center gap-1 px-5">
-        <button ref={histBtnRef} className={cn("flex items-center gap-1 rounded px-2 py-1 hover:bg-accent",
-          view === "history" && "bg-accent text-accent-foreground")}
-          title={`历史会话（工作目录 ${root || "—"}，点空白关闭）`}
-          onClick={toggleHistory}><History className="h-3.5 w-3.5" />历史</button>
-        <button className="flex items-center gap-1 rounded px-2 py-1 hover:bg-accent" title="新建会话（工作目录 = 资源管理器根目录）"
-          onClick={() => onNewSession?.()}><Plus className="h-3.5 w-3.5" />新会话</button>
-        <button className="flex items-center gap-1 rounded px-2 py-1 hover:bg-accent disabled:opacity-40" title="压缩上下文（/compact）"
-          disabled={!live || !s.connected || s.busy}
-          onClick={() => { if (wsRef.current?.readyState === 1) wsRef.current.send(JSON.stringify({ t: "user", text: "/compact" })); }}>
-          <Shrink className="h-3.5 w-3.5" />压缩</button>
-        <button className="flex items-center gap-1 rounded px-2 py-1 hover:bg-accent" title="清除屏幕（仅清当前显示，进程上下文保留）"
-          onClick={() => dispatch({ t: "clear" })}>
-          <Eraser className="h-3.5 w-3.5" />清除</button>
+      {/* 插话队列：工具条上方（占位于文档流——出现时消息列表整体上抬，不遮挡对话内容）。
+          与消息列对齐：外层只给 chatInset，20px 边距放进 max-w-5xl 列内（同 ConversationContent px-5） */}
+      {steerQ.length > 0 && (
+        <div className="shrink-0 pt-2 pb-1.5" style={{ paddingLeft: chatInset }}>
+          <div className="mx-auto flex w-full max-w-5xl flex-col gap-1.5 px-5">
+            {steerQ.map((it) => (
+              // items-start + pre-wrap：多行消息保留换行展示（truncate 会把换行压成一行省略），
+              // 超高（max-h-24）内部滚动，图标/按钮对齐首行
+              <div key={it.id}
+                className="flex items-start gap-2 rounded-lg border border-dashed border-amber-500/50 bg-amber-500/5 px-2.5 py-1.5 text-xs">
+                <Clock className="h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
+                <span className="max-h-24 min-w-0 flex-1 overflow-y-auto whitespace-pre-wrap break-words text-foreground/85" title={it.text}>{it.text}</span>
+                {!!it.urls.length && <span className="shrink-0 text-[0.625rem] text-muted-foreground">📎{it.urls.length}</span>}
+                {/* ↑ = 立即送出（与输入框发送键一致）；✕ = 撤回到输入框（多条按提交序回填：早的上面晚的下面） */}
+                <button className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+                  title="立即送出（交给 CLI 队列并上屏）" onClick={() => sendSteerNow(it.id)}>
+                  <ArrowUp className="h-3.5 w-3.5" />
+                </button>
+                <button className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+                  title="撤回到输入框（按提交顺序回填，图片附件不回填）" onClick={() => withdrawSteer(it)}>
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ))}
+          </div>
         </div>
-      </div>
-      <div className="bg-background/80 px-5 pb-3 pt-2 backdrop-blur">
-        <div className="mx-auto w-full max-w-5xl">
-          {/* 斜杠命令联想（输入 / 前缀即弹出；↑↓ 选 · Tab/Enter 补全 · Esc 关闭） */}
-          {slashOpen && slashList && (
+      )}
+
+      {/* 底部工具条+输入框：px-5 放进各 max-w-5xl 列内（外层只给 chatInset）——
+          消息列/工具条/输入框三者左右边缘完全对齐，浮层开时一并右让 */}
+      <div className="bg-background/80 pb-3 pt-0.5 backdrop-blur" style={{ paddingLeft: chatInset }}>
+        {/* 工具条 + 输入框高度拖拽区同排（省一行纵向空间）：按钮在左，剩余区域为隐形调高手柄 */}
+        <div className="mx-auto mb-2.5 flex h-6 w-full max-w-5xl items-center gap-1 px-5 text-[0.6875rem] text-muted-foreground">
+          <button ref={histBtnRef} className={cn("flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-accent",
+            view === "history" && "bg-accent text-accent-foreground")}
+            title={`历史会话（工作目录 ${root || "—"}，点空白关闭）`}
+            onClick={toggleHistory}><History className="h-3.5 w-3.5" />历史</button>
+          <button className="flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-accent" title="新建会话（工作目录 = 当前工作目录，左上角可切换）"
+            onClick={() => onNewSession?.()}><Plus className="h-3.5 w-3.5" />新会话</button>
+          <button className="flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-accent disabled:opacity-40" title="压缩上下文（/compact）"
+            disabled={!live || !s.connected || s.busy}
+            onClick={() => { if (wsRef.current?.readyState === 1) wsRef.current.send(JSON.stringify({ t: "user", text: "/compact" })); }}>
+            <Shrink className="h-3.5 w-3.5" />压缩</button>
+          <button className="flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-accent" title="清除屏幕（仅清当前显示，进程上下文保留）"
+            onClick={() => dispatch({ t: "clear" })}>
+            <Eraser className="h-3.5 w-3.5" />清除</button>
+          {/* 引擎切换：循环切换下次新会话的引擎（多引擎且非当前态才有意义） */}
+          {engines && engines.length > 1 && onEnginePref && (
+            <button
+              className={cn("flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-accent",
+                enginePref === "qtom" && "bg-primary/10 text-primary hover:bg-primary/20")}
+              title={`新会话引擎：${engines.find((e) => e.id === enginePref)?.label ?? enginePref}（点击切换；对下一次「新会话」生效）`}
+              onClick={() => {
+                const cur = engines.findIndex((e) => e.id === enginePref);
+                onEnginePref(engines[(cur + 1) % engines.length].id);
+              }}>
+              <Cat className="h-3.5 w-3.5" />
+              {enginePref === "qtom" ? "qtom" : "Claude"}
+            </button>
+          )}
+          {/* 调高手柄（不可见；拖动调输入框高度、双击恢复自动）：占据按钮右侧全部余白 */}
+          <div
+            className="min-w-16 flex-1 self-stretch cursor-row-resize touch-none"
+            title="拖动调整输入框高度（双击恢复自动）"
+            onPointerDown={(e) => {
+              const ta = document.querySelector("textarea[name='message']") as HTMLTextAreaElement | null;
+              if (!ta) return;
+              e.preventDefault();
+              inputDrag.current = { y: e.clientY, h: ta.getBoundingClientRect().height };
+              (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+            }}
+            onPointerMove={(e) => {
+              const d = inputDrag.current;
+              if (!d) return;
+              const h = Math.round(Math.max(88, Math.min(window.innerHeight * 0.7, d.h + (d.y - e.clientY))));
+              setInputH(h);
+            }}
+            onPointerUp={() => { inputDrag.current = null; }}
+            onDoubleClick={() => setInputH(null)}
+          />
+        </div>
+        <div className="mx-auto w-full max-w-5xl px-5">
+          {/* 斜杠命令联想（输入 / 前缀即弹出；无真清单时如实提示会话状态） */}
+          {slashOpen && (
             <div className="relative">
               <div className="absolute bottom-full left-0 z-30 mb-1 w-80 overflow-hidden rounded-md border border-border bg-popover py-1 shadow-lg">
-                {slashList.map((c, i) => (
-                  <button key={c}
+                {slashList ? (
+                  <div className="max-h-72 overflow-y-auto">
+                    {slashList.map((c, i) => (
+                      <button key={c}
+                        onMouseDown={(e) => e.preventDefault()} // 不抢焦点，补全后继续输入
+                        onClick={() => pickSlash(c)}
+                        // 键盘导航时高亮项滚进视窗（列表可能长于弹层）
+                        ref={i === slashIdxC ? (el) => el?.scrollIntoView({ block: "nearest" }) : undefined}
+                        className={cn("flex w-full items-center gap-2 px-3 py-1 text-left text-xs",
+                          i === slashIdxC ? "bg-accent text-accent-foreground" : "hover:bg-accent/50")}>
+                        <span className="font-mono">/{c}</span>
+                        {SLASH_DESC[c] && <span className="ml-auto shrink-0 text-[0.625rem] text-muted-foreground">{SLASH_DESC[c]}</span>}
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  // 命令清单只在 live init 下发（含 skills）——拿不到就不造假
+                  <div className="px-3 py-2 text-xs text-muted-foreground">
+                    {live
+                      ? "会话启动中，命令清单尚未下发（首轮消息后可用）…"
+                      : "暂无活动会话——发送消息恢复/新建会话后，命令联想可用"}
+                  </div>
+                )}
+                {slashList && <div className="border-t border-border/60 px-3 py-0.5 text-[0.625rem] text-muted-foreground/70">↑↓ 选择 · Tab/Enter 补全 · Esc 关闭</div>}
+              </div>
+            </div>
+          )}
+          {/* @ 文件引用联想（@src/… 可下钻；目录选择继续列内容、文件选择补全收尾） */}
+          {atOpen && atList && (
+            <div className="relative">
+              <div className="absolute bottom-full left-0 z-30 mb-1 w-80 overflow-hidden rounded-md border border-border bg-popover py-1 shadow-lg">
+                <div className="px-3 py-0.5 text-[0.625rem] text-muted-foreground/70">@ {atQuery?.dir || "（工作目录）"}</div>
+                {atList.map((it, i) => (
+                  <button key={(it.dir ? "d:" : "f:") + it.n}
                     onMouseDown={(e) => e.preventDefault()} // 不抢焦点，补全后继续输入
-                    onClick={() => pickSlash(c)}
+                    onClick={() => pickAt(it)}
                     className={cn("flex w-full items-center gap-2 px-3 py-1 text-left text-xs",
-                      i === slashIdxC ? "bg-accent text-accent-foreground" : "hover:bg-accent/50")}>
-                    <span className="font-mono">/{c}</span>
-                    {SLASH_DESC[c] && <span className="ml-auto shrink-0 text-[0.625rem] text-muted-foreground">{SLASH_DESC[c]}</span>}
+                      i === atIdxC ? "bg-accent text-accent-foreground" : "hover:bg-accent/50")}>
+                    {it.dir
+                      ? <FolderOpen className="h-3 w-3 shrink-0 text-[oklch(0.75_0.14_85)]" />
+                      : <FileIcon className="h-3 w-3 shrink-0 text-muted-foreground" />}
+                    <span className="truncate font-mono">{it.n}</span>
+                    {it.dir && <span className="ml-auto shrink-0 text-[0.625rem] text-muted-foreground/70">进入 /</span>}
                   </button>
                 ))}
-                <div className="border-t border-border/60 px-3 py-0.5 text-[0.625rem] text-muted-foreground/70">↑↓ 选择 · Tab/Enter 补全 · Esc 关闭</div>
+                <div className="border-t border-border/60 px-3 py-0.5 text-[0.625rem] text-muted-foreground/70">@ 引用文件 · ↑↓ 选择 · Tab/Enter 补全 · Esc 关闭</div>
               </div>
             </div>
           )}
@@ -800,81 +1334,71 @@ export default function ChatPanel({
               </div>
             </div>
           )}
-          {/* 待发图片缩略图 + 插话队列（都钉在输入框上方，不进消息流） */}
-          {(imgs.length > 0 || steerQ.length > 0) && (
-            <div className="mb-1.5 flex flex-col gap-1.5">
-              {imgs.length > 0 && (
-                <div className="flex flex-wrap gap-1.5">
-                  {imgs.map((im, i) => (
-                    <div key={i} className="relative">
-                      <img src={im.url} alt={im.name} title={im.name}
-                        className="h-12 w-12 rounded-md border border-border object-cover" />
-                      <button
-                        className="absolute -right-1.5 -top-1.5 rounded-full border border-border bg-background p-0.5 text-muted-foreground hover:text-foreground"
-                        title={`移除 ${im.name}`} onClick={() => setImgs((p) => p.filter((_, j) => j !== i))}>
-                        <X className="h-2.5 w-2.5" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {steerQ.map((it) => (
-                <div key={it.id}
-                  className="flex items-center gap-2 rounded-lg border border-dashed border-amber-500/50 bg-amber-500/5 px-2.5 py-1.5 text-xs">
-                  <Clock className="h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
-                  <span className="min-w-0 flex-1 truncate text-foreground/85" title={it.text}>{it.text}</span>
-                  {!!it.urls.length && <span className="shrink-0 text-[0.625rem] text-muted-foreground">📎{it.urls.length}</span>}
-                  <button className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
-                    title="立即送出（交给 CLI 队列并上屏）" onClick={() => sendSteerNow(it.id)}>
-                    <ArrowUp className="h-3.5 w-3.5" />
-                  </button>
-                  <button className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
-                    title="删除（不发送）" onClick={() => setSteerQ((q) => q.filter((x) => x.id !== it.id))}>
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              ))}
-              {steerQ.length > 0 && (
-                <div className="px-1 text-[0.625rem] text-muted-foreground/70">
-                  插话排队中——本轮结束后自动送出；↑ 立即送出 · ✕ 删除
-                </div>
-              )}
-            </div>
-          )}
-          <PromptInput value={input} onValueChange={onInput} onSubmit={send} className="bg-card"
-            onDragOver={(e: any) => e.preventDefault()}
-            onDrop={(e: any) => { e.preventDefault(); const fs = e.dataTransfer?.files; if (fs?.length) addFiles(fs); }}>
+          {/* 图片上传入口已移除（2026-11-08：目录树支持上传，引用文件用 @ 联想）；
+              imgs 状态与 WS images 通道保留——无入口即恒空，协议面不动 */}
+          <PromptInput value={input} onSubmit={send} className="bg-card">
             <PromptInputBody>
               <PromptInputTextarea
+                /* 受控接线（ai-elements 升级后 PromptInput 不再收 onValueChange——曾被
+                   透传丢弃导致 input 镜像不更新，斜杠/@ 联想全失效）。setTaValue 的程序化
+                   写入走派发 input 事件 → 同样进 onChange 链，镜像自动同步 */
+                value={input}
+                onChange={(e) => onInput(e.currentTarget.value)}
+                /* flex-1 在列向 flex 里 basis:0 无视 height——flex:none 让显式高度/内容高度生效 */
+                style={{ flex: "0 0 auto", height: inputH ?? undefined, maxHeight: inputH ?? "60vh" }}
                 placeholder={live
-                  ? (s.alive ? "给 Claude 发消息…（/ 命令联想 · Enter 发送 · ESC 打断 · 可粘贴/拖入图片）" : "进程已退出，请新建会话")
+                  ? (s.alive
+                    ? (isQtom
+                      ? "给 qtom 发消息…（/ 命令联想 · Enter 发送 · ESC 打断）"
+                      : "给 Claude 发消息…（/ 命令 · @ 引用文件 · Enter 发送 · ESC 打断）")
+                    : "进程已退出，请新建会话")
                   : "历史会话 · 输入即恢复上下文继续对话（Enter 发送）"}
-                onPaste={(e: any) => {
-                  const fs = e.clipboardData?.files;
-                  if (fs?.length) { e.preventDefault(); addFiles(fs); }
-                }}
                 onKeyDown={(e) => {
-                  if (!slashOpen || !slashList) return;
-                  if (e.key === "ArrowDown") { e.preventDefault(); setSlashIdx((slashIdxC + 1) % slashList.length); }
-                  else if (e.key === "ArrowUp") { e.preventDefault(); setSlashIdx((slashIdxC - 1 + slashList.length) % slashList.length); }
-                  else if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); pickSlash(slashList[slashIdxC]); }
-                  else if (e.key === "Escape") { e.preventDefault(); setSlashOff(true); }
+                  if (slashOpen) {
+                    if (e.key === "Escape") { e.preventDefault(); setSlashOff(true); return; }
+                    // 导航/补全只在有真列表时（提示态 Enter 保持正常发送语义）
+                    if (slashList) {
+                      if (e.key === "ArrowDown") { e.preventDefault(); setSlashIdx((slashIdxC + 1) % slashList.length); return; }
+                      else if (e.key === "ArrowUp") { e.preventDefault(); setSlashIdx((slashIdxC - 1 + slashList.length) % slashList.length); return; }
+                      else if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); pickSlash(slashList[slashIdxC]); return; }
+                    }
+                  }
+                  if (atOpen && atList) {
+                    if (e.key === "ArrowDown") { e.preventDefault(); setAtIdx((atIdxC + 1) % atList.length); }
+                    else if (e.key === "ArrowUp") { e.preventDefault(); setAtIdx((atIdxC - 1 + atList.length) % atList.length); }
+                    else if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); pickAt(atList[atIdxC]); }
+                    else if (e.key === "Escape") { e.preventDefault(); setAtOff(true); }
+                    return;
+                  }
+                  // 输入历史召回：光标在第一行第一列（selectionStart 0）按 ↑；末尾按 ↓ 前进/还原草稿
+                  // （判定/草稿都取原生 ta.value——input state 是镜像，可能滞后）
+                  const ta = e.currentTarget as HTMLTextAreaElement;
+                  if (e.key === "ArrowUp" && ta.selectionStart === 0 && ta.selectionEnd === 0 && inputHist.current.length) {
+                    e.preventDefault();
+                    if (histNavIdx.current === -1) {
+                      histDraft.current = ta.value;
+                      histNavIdx.current = inputHist.current.length - 1;
+                    } else histNavIdx.current = Math.max(0, histNavIdx.current - 1);
+                    // 召回后光标放回首位，连续 ↑ 才能继续向前翻
+                    writeTa(inputHist.current[histNavIdx.current], 0);
+                  } else if (e.key === "ArrowDown" && histNavIdx.current !== -1
+                    && (ta.selectionStart === 0 || ta.selectionStart === ta.value.length)
+                    && ta.selectionEnd === ta.selectionStart) {
+                    // 光标在头部（↑ 召回后的状态）或尾部才前进；中部留给正常编辑移光标
+                    e.preventDefault();
+                    histNavIdx.current++;
+                    if (histNavIdx.current >= inputHist.current.length) {
+                      histNavIdx.current = -1;
+                      writeTa(histDraft.current);
+                    } else writeTa(inputHist.current[histNavIdx.current]);
+                  }
                 }}
               />
             </PromptInputBody>
             <PromptInputFooter>
               <PromptInputTools>
-                {/* 图片附件：选择文件（粘贴/拖拽入口在输入框上；只对 live 会话开放） */}
-                <input ref={fileRef} type="file" accept="image/*" multiple className="hidden"
-                  onChange={(e) => { addFiles(e.target.files ?? []); e.target.value = ""; }} />
-                <button type="button"
-                  className={cn("flex items-center gap-1 rounded-full border border-border/80 bg-secondary/70 px-2 py-0.5 text-[0.625rem] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground",
-                    imgs.length > 0 && "border-primary/40 text-primary")}
-                  title={imgs.length ? `已选 ${imgs.length} 张图片（输入框上方可移除）` : "附加图片（也可直接粘贴/拖入）"}
-                  disabled={!live}
-                  onClick={() => fileRef.current?.click()}>
-                  <Paperclip className="h-3 w-3" />{imgs.length > 0 ? `图片 ×${imgs.length}` : "图片"}
-                </button>
+                {/* 图片附件按钮已移除（上传走目录树；@ 联想引用文件）——imgs/fileRef/addFiles
+                    留在上方仅供既有 WS images 协议兜底，无 UI 入口 */}
                 {/* ctx 占用徽章：中性底，仅数字按阈值着色（纯展示；压缩/清除走上方工具条）。
                     常驻不隐藏：无数据（首轮 result 未到）按 0% 展示并占住位置，避免出现时 footer 抖动 */}
                 <span
@@ -889,31 +1413,35 @@ export default function ChatPanel({
                   )}>{ctxPct ?? 0}%</span>
                 </span>
                 {/* 模式 + 模型 + 连接态（cwd 见标题栏左角） */}
-                {/* 模式 badge：default 中性灰；非默认模式主色系提醒（一眼看出在特殊模式） */}
+                {/* 模式 badge：default 中性灰；非默认模式主色系提醒（一眼看出在特殊模式）；qtom 固定策略不显示 */}
+                {!isQtom && (
+                  <button type="button"
+                    className={cn(
+                      "flex items-center gap-1 rounded-full border px-2 py-0.5 font-mono text-[0.625rem] transition-colors",
+                      s.permMode !== "default"
+                        ? "border-primary/40 bg-primary/15 text-primary hover:bg-primary/25"
+                        : "border-border/80 bg-secondary/70 text-muted-foreground hover:bg-accent hover:text-foreground",
+                    )}
+                    title={`权限模式：${s.permMode}（点击切换 default/plan/acceptEdits/auto/dontAsk）`}
+                    onClick={() => setMenu(menu === "mode" ? null : "mode")}>
+                    {ctrlPend === "mode"
+                      ? <Loader2 className="h-3 w-3 animate-spin" />
+                      : (() => { const M = MODES.find((m) => m.id === s.permMode); return M ? <M.Icon className="h-3 w-3" /> : null; })()}
+                    {MODES.find((m) => m.id === s.permMode)?.label ?? s.permMode}
+                  </button>
+                )}
+                {/* 模型 badge：中性胶囊 + 连接态圆点；切换中主色；qtom 单模型只展示不可切 */}
                 <button type="button"
-                  className={cn(
-                    "flex items-center gap-1 rounded-full border px-2 py-0.5 font-mono text-[0.625rem] transition-colors",
-                    s.permMode !== "default"
-                      ? "border-primary/40 bg-primary/15 text-primary hover:bg-primary/25"
-                      : "border-border/80 bg-secondary/70 text-muted-foreground hover:bg-accent hover:text-foreground",
-                  )}
-                  title={`权限模式：${s.permMode}（点击切换 default/plan/acceptEdits/auto/dontAsk）`}
-                  onClick={() => setMenu(menu === "mode" ? null : "mode")}>
-                  {ctrlPend === "mode"
-                    ? <Loader2 className="h-3 w-3 animate-spin" />
-                    : (() => { const M = MODES.find((m) => m.id === s.permMode); return M ? <M.Icon className="h-3 w-3" /> : null; })()}
-                  {MODES.find((m) => m.id === s.permMode)?.label ?? s.permMode}
-                </button>
-                {/* 模型 badge：中性胶囊 + 连接态圆点；切换中主色 */}
-                <button type="button"
+                  disabled={isQtom}
                   className={cn(
                     "flex items-center gap-1.5 rounded-full border px-2 py-0.5 font-mono text-[0.625rem] transition-colors",
                     ctrlPend === "model"
                       ? "border-primary/40 bg-primary/10 text-primary hover:bg-primary/20"
                       : "border-border/80 bg-secondary/70 text-foreground/80 hover:bg-accent hover:text-foreground",
+                    isQtom && "cursor-default hover:bg-secondary/70 hover:text-foreground/80",
                   )}
-                  title={`模型：${s.model || "—"}（点击切换）`}
-                  onClick={() => setMenu(menu === "model" ? null : "model")}>
+                  title={isQtom ? "qtom 单模型（DeepSeek 网页版）" : `模型：${s.model || "—"}（点击切换）`}
+                  onClick={() => { if (!isQtom) setMenu(menu === "model" ? null : "model"); }}>
                   {ctrlPend === "model"
                     ? <Loader2 className="h-3 w-3 animate-spin" />
                     : <span className={cn("h-1.5 w-1.5 rounded-full", live ? (s.connected ? "bg-emerald-500" : "bg-muted-foreground/40") : "bg-muted-foreground/40")} />}
