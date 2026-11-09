@@ -6,13 +6,13 @@ description = "ccweb 服务进程：bind/信号/启动日志（业务在 ccweb-c
 
 # 产物名对齐部署名：target/release/ccweb → /usr/local/ccweb（make/make install 同款语义）
 [[bin]]
-name = "ccweb"
+name = "qweb"
 path = "src/main.rs"
 
 # Windows 桌面壳（Tauri + WebView2，窗口导航进程内 axum）：需 --features desktop，
 # 仅 Windows 编译（其他平台用 ccweb 浏览器版）
 [[bin]]
-name = "ccweb-desktop"
+name = "qweb-desktop"
 path = "src/bin/desktop.rs"
 required-features = ["desktop"]
 

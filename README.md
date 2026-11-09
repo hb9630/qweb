@@ -1,4 +1,4 @@
-# ccweb
+# qweb
 
 Claude Code 的流式 Web 工作台：对话（stream-json 双向管道）为全宽主角，目录树/编辑器是从标题栏左上（工作目录三件套）派生的一体化浮层（右键全功能文件管理、多 tab 编辑）。Rust 后端（axum/tokio 单二进制，前端全量嵌入）+ React 前端；npm 机制只用于 frontend/，根目录纯 shell 脚本（build.sh / deploy.sh）编排构建与部署。
 
@@ -17,7 +17,7 @@ frontend/           前端（React + TypeScript + Vite）——js/mjs 全部收�
   src/Explorer      目录树浮层（标题栏下方垂到底；右键菜单、多选、拖放、上传/下载；独立 X 关闭）
   src/Editor        编辑器浮层（贴树右侧；tab 管理与编辑）
   test/             node 测试（playwright UI 冒烟 + 服务端 e2e/resume + esbuild/jsdom 组件测试；stubs/ 为 esbuild 别名桩）
-build.sh            根目录唯一编排脚本（make/make install/make clean 语义）：构建出 ./ccweb；desktop 出 Windows 桌面版 ./ccweb-desktop.exe；deploy（= install）装 /usr/local/ccweb + systemd；clean 清产物
+build.sh            根目录唯一编排脚本（make/make install/make clean 语义）：构建出 ./qweb；desktop 出 Windows 桌面版 ./qweb-desktop.exe；deploy（= install）装 /usr/local/qweb + systemd；clean 清产物
 restart.sh          本机快速迭代：构建 + 重启 18090 服务（nohup ./restart.sh &；活会话断开，刷新自动 resume）
 ```
 
@@ -27,8 +27,8 @@ npm 机制只存在于 frontend/ 内部（install/dev/build 走 vite）；cargo 
 
 ```bash
 (cd frontend && npm install)          # 前端依赖（Rust 侧经 backend/.cargo/config.toml 走 rsproxy 镜像）
-./build.sh                            # 全量构建：frontend/dist + 根目录 ./ccweb（~19MB 单文件）
-./build.sh clean                      # 清产物：./ccweb、frontend/dist、cargo target
+./build.sh                            # 全量构建：frontend/dist + 根目录 ./qweb（~19MB 单文件）
+./build.sh clean                      # 清产物：./qweb、frontend/dist、cargo target
 CCWEB_NO_RUST=1 ./build.sh            # 只出前端（开发够用）
 
 (cd backend && cargo run -p ccweb-server)   # Rust 后端开发跑（debug 态 dist 从磁盘读，前端重建无需重编）
@@ -62,10 +62,10 @@ set LIB=%LIB%;%K%\Lib\10.0.19041.0\ucrt\x64;%K%\Lib\10.0.19041.0\um\x64
 cd /d <repo>\backend && cargo build --release -p ccweb-server %*
 ```
 
-注意：重构建前先停在跑的 ccweb/ccweb-desktop 进程——Windows 锁住运行中的 exe，
+注意：重构建前先停在跑的 qweb/qweb-desktop 进程——Windows 锁住运行中的 exe，
 cargo 换产物时报 `failed to remove file ... (os error 5)`。
 
-**Windows 桌面版**（Tauri + WebView2 壳）：`./build.sh desktop` → 根目录 `ccweb-desktop.exe`
+**Windows 桌面版**（Tauri + WebView2 壳）：`./build.sh desktop` → 根目录 `qweb-desktop.exe`
 （~25MB，GUI 子系统无控制台黑窗，claude 子进程经 CREATE_NO_WINDOW 抑制控制台弹窗）。
 双击即开原生窗口：进程内起 axum（默认 `127.0.0.1:随机空闲端口`，不暴露局域网、
 不与浏览器版撞口；显式 `--port`/`CCWEB_PORT` 时按配置监听），窗口直接导航之——前端
@@ -80,11 +80,11 @@ cargo 换产物时报 `failed to remove file ... (os error 5)`。
 按目标环境取用，四种形态同一份代码：
 
 - **裸跑**：`(cd backend && cargo run)`——开发态（dist 读磁盘）
-- **单文件**：根目录 `./ccweb`（./build.sh 产物，Rust 二进制 + 前端全量嵌入，~19MB；原 SEA 形态 137MB 的 1/7，常驻内存 ~8MB vs Node ~52MB；git 忽略）——拷到任何装了 claude 的机器，任意目录 `./ccweb` 即跑，无任何运行时依赖；**起来后默认自动开浏览器**（`--no-browser` 关）
-- **Windows 桌面版**：`./build.sh desktop` → `./ccweb-desktop.exe`（Tauri + WebView2 原生窗口，双击即用；见上"Windows 本地开发"）——Windows 的默认形态
+- **单文件**：根目录 `./qweb`（./build.sh 产物，Rust 二进制 + 前端全量嵌入，~19MB；原 SEA 形态 137MB 的 1/7，常驻内存 ~8MB vs Node ~52MB；git 忽略）——拷到任何装了 claude 的机器，任意目录 `./qweb` 即跑，无任何运行时依赖；**起来后默认自动开浏览器**（`--no-browser` 关）
+- **Windows 桌面版**：`./build.sh desktop` → `./qweb-desktop.exe`（Tauri + WebView2 原生窗口，双击即用；见上"Windows 本地开发"）——Windows 的默认形态
 - **./build.sh deploy**：假如使用 systemd 的话（Linux 服务器常态），构建+安装一条命令——开发目录只是源码，服务装在系统位置、与源码解耦，升级 = 重跑 `./build.sh deploy`：
   1. 全量构建出 Rust 单文件（Linux 目标需 linux 构建产物——目标机构建或交叉编译）
-  2. 安装 **`/usr/local/ccweb`**（自包含单文件本体）
+  2. 安装 **`/usr/local/qweb`**（自包含单文件本体）
   3. 生成 systemd 单元（自适应 User/HOME/端口，默认 **18090**；`CCWEB_PORT=xxx ./build.sh deploy` 改端口）→ 安装重启 → 健康检查
 
 ## 与 Node 版的刻意差异（Rust 版）
@@ -100,16 +100,16 @@ cargo 换产物时报 `failed to remove file ... (os error 5)`。
 ## CLI 参数
 
 ```bash
-./ccweb -p 18090                # 指定端口（--port=18090 等价）
-./ccweb --home /data/ws --single
-./ccweb --no-browser            # 不自动开浏览器（服务器/反代部署）
-./ccweb --help                  # 完整用法；--version 查版本
+./qweb -p 18090                # 指定端口（--port=18090 等价）
+./qweb --home /data/ws --single
+./qweb --no-browser            # 不自动开浏览器（服务器/反代部署）
+./qweb --help                  # 完整用法；--version 查版本
 ```
 
 启动横幅始终打印生效参数（含默认值），端口带来源标注：
 
 ```
-[ccweb] v0.1.0  http://0.0.0.0:18090
+[qweb] v0.1.0  http://0.0.0.0:18090
        port: 18090 (-p)   home: /Users/huangbin
        claude: /usr/local/bin/claude   auth: nopass   single: off
 ```
@@ -132,9 +132,9 @@ systemd unit 传 env 比 args 方便，env 形态全量保留（与上表 CLI �
 ## 访问认证（code-server 同款语义）
 
 ```bash
-./ccweb --auth=nopass                      # 默认：无认证
-./ccweb --auth=password --password=xxx     # 密码模式
-CCWEB_AUTH=password CCWEB_PASSWORD=xxx ./ccweb   # env 形态（systemd unit 传 env 更方便）
+./qweb --auth=nopass                      # 默认：无认证
+./qweb --auth=password --password=xxx     # 密码模式
+CCWEB_AUTH=password CCWEB_PASSWORD=xxx ./qweb   # env 形态（systemd unit 传 env 更方便）
 ```
 
 - 密码模式：全部 HTTP/WS 需会话 cookie；未登录页面 303 → `/login`（内建深色登录页），API 401，WS 拒绝

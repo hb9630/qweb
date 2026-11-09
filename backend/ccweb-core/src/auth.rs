@@ -81,7 +81,7 @@ pub fn login_page(error: bool, base: &str) -> Response<Body> {
         r#"<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>ccweb · 登录</title>
+<title>qweb · 登录</title>
 <style>
   :root {{ color-scheme: dark; }}
   body {{ margin:0; min-height:100vh; display:grid; place-items:center;
@@ -100,7 +100,7 @@ pub fn login_page(error: bool, base: &str) -> Response<Body> {
   .err {{ color:#ff7b72; margin:-0.4rem 0 .9rem; }}
 </style></head>
 <body><form class="card" method="POST" action="{base}/login">
-  <h1>ccweb</h1><p>Claude Code 流式 Web 工作台 · 需要密码</p>
+  <h1>qweb</h1><p>Claude Code 流式 Web 工作台 · 需要密码</p>
   {err}
   <input type="password" name="password" placeholder="密码" autofocus autocomplete="current-password">
   <button type="submit">进入</button>

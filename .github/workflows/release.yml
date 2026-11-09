@@ -1,6 +1,6 @@
 # 发版流水线：推 v* tag → 云端构建多平台产物并挂 GitHub Release
 #   git tag v0.1.0 && git push origin v0.1.0
-# 产物：ccweb-desktop-<tag>.exe（Windows Tauri 桌面版）/ ccweb-<tag>.exe（浏览器版）/ ccweb-linux-<tag>（服务器单文件）
+# 产物：qweb-desktop-<tag>.exe（Windows Tauri 桌面版）/ qweb-<tag>.exe（浏览器版）/ qweb-linux-<tag>（服务器单文件）
 # runner 自带 MSVC 2022 + Node（本机的 GNU link 冒充 / SDK 检测坑在云端不存在）
 name: release
 on:
@@ -27,15 +27,15 @@ jobs:
       - name: 收集产物
         shell: bash
         run: |
-          cp backend/target/release/ccweb-desktop.exe "ccweb-desktop-${{ github.ref_name }}.exe"
-          cp backend/target/release/ccweb.exe "ccweb-${{ github.ref_name }}.exe"
+          cp backend/target/release/qweb-desktop.exe "qweb-desktop-${{ github.ref_name }}.exe"
+          cp backend/target/release/qweb.exe "qweb-${{ github.ref_name }}.exe"
       - uses: actions/upload-artifact@v4
-        with: { name: windows, path: "ccweb-*.exe" }
+        with: { name: windows, path: "qweb-*.exe" }
       - name: 挂 Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: "ccweb-*.exe"
+          files: "qweb-*.exe"
           generate_release_notes: true
 
   linux:
@@ -54,12 +54,12 @@ jobs:
         run: cargo build --release -p ccweb-server
         working-directory: backend
       - name: 收集产物
-        run: cp backend/target/release/ccweb "ccweb-linux-${{ github.ref_name }}"
+        run: cp backend/target/release/qweb "qweb-linux-${{ github.ref_name }}"
       - uses: actions/upload-artifact@v4
-        with: { name: linux, path: "ccweb-linux-*" }
+        with: { name: linux, path: "qweb-linux-*" }
       - name: 挂 Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: "ccweb-linux-*"
+          files: "qweb-linux-*"
           generate_release_notes: true

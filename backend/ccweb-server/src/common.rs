@@ -11,9 +11,9 @@ pub fn reqwest_probe_client() -> reqwest::Client {
 }
 
 const USAGE: &str = "\
-ccweb —— Claude Code Web 壳
+qweb —— Claude Code Web 壳
 
-用法: ccweb [选项]
+用法: qweb [选项]
 
 选项:
   -p, --port <PORT>     监听端口（默认 8090；env CCWEB_PORT）
@@ -89,7 +89,7 @@ pub fn apply_cli(cfg: &mut ccweb_core::config::Config) -> CliOut {
             println!("{USAGE}");
             std::process::exit(0);
         } else if a == "--version" || a == "-V" {
-            println!("ccweb {}", env!("CARGO_PKG_VERSION"));
+            println!("qweb {}", env!("CARGO_PKG_VERSION"));
             std::process::exit(0);
         } else {
             eprintln!("× 无法识别的参数：{a}（--help 查看用法）");
@@ -125,7 +125,7 @@ pub fn banner(cfg: &ccweb_core::config::Config, port_from: &str, bind: &str) {
         ccweb_core::config::AuthMode::NoPass => "nopass",
         ccweb_core::config::AuthMode::Password => "password",
     };
-    println!("[ccweb] v{}  http://{bind}", env!("CARGO_PKG_VERSION"));
+    println!("[qweb] v{}  http://{bind}", env!("CARGO_PKG_VERSION"));
     println!("       port: {} ({})   home: {}", cfg.port, port_from, cfg.child_home);
     println!("       claude: {}   auth: {}   single: {}", bin, auth, if cfg.single { "on" } else { "off" });
     if cfg.dsweb_enabled() {

@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "ccweb",
+  "productName": "qweb",
   "version": "0.1.0",
-  "identifier": "ccweb.desktop",
+  "identifier": "qweb.desktop",
   "build": { "frontendDist": "../ccweb-server/ui-empty" },
   "app": {
     "windows": [],

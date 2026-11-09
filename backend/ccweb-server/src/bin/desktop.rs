@@ -1,5 +1,5 @@
-// ccweb-desktop —— Windows 桌面壳（Tauri + WebView2）。仅 --features desktop 编译；
-// 其他平台/浏览器形态用 ccweb（ccweb-desktop.rs 的 compile_error 双保险）。
+// qweb-desktop —— Windows 桌面壳（Tauri + WebView2）。仅 --features desktop 编译；
+// 其他平台/浏览器形态用 qweb（qweb-desktop.rs 的 compile_error 双保险）。
 //
 // 架构：Tauri 只做窗口壳——进程内起 axum（默认 127.0.0.1:随机空闲端口，显式
 // --port/CCWEB_PORT 时用配置端口并照常 0.0.0.0 监听），窗口直接导航该 URL。
@@ -10,7 +10,7 @@
 #![cfg(feature = "desktop")]
 
 #[cfg(not(windows))]
-compile_error!("ccweb-desktop 仅 Windows 编译（其他平台用 ccweb 浏览器版）");
+compile_error!("qweb-desktop 仅 Windows 编译（其他平台用 qweb 浏览器版）");
 
 #[path = "../common.rs"]
 mod common;
@@ -59,7 +59,7 @@ fn main() {
                 "main",
                 tauri::WebviewUrl::External(url),
             )
-            .title("ccweb")
+            .title("qweb")
             .inner_size(1366.0, 860.0)
             .min_inner_size(720.0, 480.0)
             .build()?;

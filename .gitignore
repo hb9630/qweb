@@ -1,10 +1,10 @@
 node_modules/
 dist/
 target/
-/ccweb
+/qweb
 /qtom
 *.log
-/ccweb.exe
+/qweb.exe
 /qtom.exe
-/ccweb-desktop.exe
+/qweb-desktop.exe
 backend/ccweb-server/gen/
