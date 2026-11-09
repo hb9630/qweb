@@ -1,0 +1,722 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>山水长卷 · 一卷藏千里</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect x='4' y='4' width='56' height='56' rx='8' fill='%23a63a2b'/%3E%3Ctext x='32' y='46' font-size='36' text-anchor='middle' fill='%23ece6d9' font-family='KaiTi,serif'%3E山%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/lxgw-wenkai-lite-webfont@1.1.0/style.css">
+<style>
+  :root {
+    --paper: #ece6d9;
+    --paper-deep: #e2dac8;
+    --ink: #191510;
+    --ink-soft: #5d564a;
+    --ink-faint: #a89e8b;
+    --cinnabar: #a63a2b;
+    --gold: #c9a063;
+    --night: #14110c;
+    --font-main: "LXGW WenKai Lite", "Kaiti SC", "STKaiti", "KaiTi", "Noto Serif SC", serif;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    font-family: var(--font-main);
+    background: var(--paper);
+    color: var(--ink);
+    overflow-x: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* 宣纸颗粒纹理，铺满全页 */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    pointer-events: none;
+    opacity: .5;
+    mix-blend-mode: multiply;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.16'/%3E%3C/svg%3E");
+  }
+
+  /* ============ 展卷进度条 ============ */
+  .progress {
+    position: fixed;
+    top: 0; left: 0;
+    width: 100%; height: 3px;
+    background: var(--cinnabar);
+    transform-origin: left;
+    transform: scaleX(0);
+    z-index: 100;
+  }
+
+  /* ============ 卷首 ============ */
+  .hero {
+    position: relative;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+  }
+
+  /* 背景水墨晕染 */
+  .ink-blot {
+    position: absolute;
+    width: 60vmin; height: 60vmin;
+    top: -12vmin; right: -10vmin;
+    border-radius: 48% 52% 55% 45% / 50% 46% 54% 50%;
+    background: radial-gradient(closest-side, rgba(25,21,16,.14), rgba(25,21,16,.05) 62%, transparent 75%);
+    filter: blur(6px);
+    animation: blot-grow 3.2s cubic-bezier(.22,.9,.3,1) .4s both;
+  }
+  .ink-blot.b2 {
+    width: 34vmin; height: 34vmin;
+    top: auto; right: 16vw; bottom: 4vmin;
+    opacity: .6;
+    animation-delay: 1.1s;
+  }
+  @keyframes blot-grow {
+    from { transform: scale(.2); opacity: 0; }
+    to   { transform: scale(1); opacity: 1; }
+  }
+
+  .hero-inner {
+    position: relative;
+    display: flex;
+    align-items: flex-start;
+    gap: clamp(28px, 6vw, 88px);
+    padding: 0 6vw;
+  }
+
+  /* 竖排主标题，逐字落墨 */
+  .hero-title {
+    writing-mode: vertical-rl;
+    font-size: clamp(72px, 13vw, 168px);
+    font-weight: 400;
+    letter-spacing: .18em;
+    line-height: 1;
+    color: var(--ink);
+  }
+  .hero-title span {
+    display: inline-block;
+    opacity: 0;
+    animation: char-in 1s cubic-bezier(.2,.8,.25,1) both;
+  }
+  .hero-title span:nth-child(1) { animation-delay: .55s; }
+  .hero-title span:nth-child(2) { animation-delay: .72s; }
+  .hero-title span:nth-child(3) { animation-delay: .89s; }
+  .hero-title span:nth-child(4) { animation-delay: 1.06s; }
+  @keyframes char-in {
+    from { opacity: 0; transform: translateY(-26px); filter: blur(8px); }
+    to   { opacity: 1; transform: translateY(0);    filter: blur(0); }
+  }
+
+  .hero-side {
+    writing-mode: vertical-rl;
+    font-size: clamp(14px, 1.6vw, 19px);
+    letter-spacing: .5em;
+    color: var(--ink-soft);
+    padding-top: 14px;
+    opacity: 0;
+    animation: fade-up 1.4s ease 1.5s both;
+  }
+
+  /* 朱砂印章 */
+  .seal {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    writing-mode: vertical-rl;
+    background: var(--cinnabar);
+    color: var(--paper);
+    font-size: 15px;
+    letter-spacing: .22em;
+    padding: 9px 7px;
+    border-radius: 3px 5px 3px 6px;
+    box-shadow: inset 0 0 0 1.5px rgba(236,230,217,.85), inset 0 0 0 3.5px var(--cinnabar), inset 0 0 10px rgba(60,10,4,.45), 0 2px 10px rgba(90,25,15,.22);
+    transform: rotate(2deg);
+  }
+  .hero-seal {
+    position: absolute;
+    left: clamp(-8px, -1vw, 0px);
+    bottom: -4px;
+    font-size: 17px;
+    padding: 11px 8px;
+    opacity: 0;
+    animation: stamp 1s cubic-bezier(.34,1.4,.5,1) 2s both;
+  }
+  @keyframes stamp {
+    0%   { opacity: 0; transform: rotate(2deg) scale(2.6); filter: blur(3px); }
+    55%  { opacity: 1; transform: rotate(2deg) scale(.94); filter: blur(0); }
+    100% { opacity: 1; transform: rotate(2deg) scale(1); }
+  }
+
+  /* 展卷提示 */
+  .scroll-hint {
+    position: absolute;
+    bottom: 34px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    color: var(--ink-faint);
+    font-size: 14px;
+    letter-spacing: .5em;
+    text-indent: .5em;
+    opacity: 0;
+    animation: fade-up 1.5s ease 2.4s both;
+  }
+  .hint-line {
+    width: 1px; height: 52px;
+    background: linear-gradient(var(--ink-faint), transparent);
+    animation: hint-pulse 2.2s ease-in-out infinite;
+  }
+  @keyframes hint-pulse {
+    0%, 100% { transform: scaleY(.55); opacity: .4; transform-origin: top; }
+    50%      { transform: scaleY(1);   opacity: 1;  transform-origin: top; }
+  }
+  @keyframes fade-up {
+    from { opacity: 0; transform: translateY(16px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  /* ============ 各景通用 ============ */
+  .scene {
+    position: relative;
+    min-height: 100vh;
+    padding: clamp(90px, 14vh, 160px) 6vw;
+    display: grid;
+    grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+    align-items: center;
+    gap: clamp(32px, 5vw, 80px);
+  }
+  .scene::after { /* 章节间的墨线 */
+    content: "";
+    position: absolute;
+    left: 6vw; right: 6vw; bottom: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--ink-faint), transparent);
+    opacity: .45;
+  }
+
+  .scene-num {
+    position: absolute;
+    top: clamp(28px, 6vh, 64px);
+    right: 7vw;
+    font-size: clamp(64px, 8vw, 120px);
+    color: var(--ink);
+    opacity: .07;
+    line-height: 1;
+    user-select: none;
+  }
+
+  .kicker {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    color: var(--cinnabar);
+    font-size: clamp(15px, 1.6vw, 19px);
+    letter-spacing: .6em;
+    margin-bottom: clamp(24px, 4vh, 44px);
+  }
+  .kicker::after {
+    content: "";
+    flex: 0 0 56px;
+    height: 1px;
+    background: var(--cinnabar);
+    opacity: .55;
+  }
+
+  .verse {
+    writing-mode: vertical-rl;
+    display: flex;
+    gap: clamp(14px, 2vw, 26px);
+    height: clamp(300px, 44vh, 420px);
+    font-size: clamp(26px, 3.2vw, 42px);
+    font-weight: 400;
+    letter-spacing: .3em;
+    line-height: 1;
+  }
+  .verse span { display: block; }
+  .verse .attribution {
+    font-size: .42em;
+    color: var(--ink-faint);
+    letter-spacing: .35em;
+    padding-top: 1.2em;
+  }
+
+  .prose {
+    margin-top: clamp(28px, 4vh, 44px);
+    max-width: 34em;
+    font-size: clamp(15px, 1.5vw, 17.5px);
+    line-height: 2.15;
+    color: var(--ink-soft);
+    text-align: justify;
+  }
+  .prose em {
+    font-style: normal;
+    color: var(--cinnabar);
+  }
+
+  .art {
+    position: relative;
+    border-radius: 6px;
+    overflow: hidden;
+  }
+
+  /* 滚动浮现 */
+  .reveal {
+    opacity: 0;
+    transform: translateY(30px);
+    transition: opacity 1s cubic-bezier(.2,.7,.3,1), transform 1s cubic-bezier(.2,.7,.3,1);
+  }
+  .reveal.in { opacity: 1; transform: translateY(0); }
+  .reveal.d1 { transition-delay: .15s; }
+  .reveal.d2 { transition-delay: .3s; }
+  .reveal.d3 { transition-delay: .45s; }
+
+  /* ============ 壹 · 观山 ============ */
+  .art-mountain {
+    background: linear-gradient(180deg, #efe9dc 0%, #e7dfcd 100%);
+    box-shadow: 0 24px 60px -28px rgba(25,21,16,.4);
+  }
+  .art-mountain svg { display: block; width: 100%; height: auto; }
+  .sun { animation: sun-breathe 7s ease-in-out infinite; transform-origin: center; transform-box: fill-box; }
+  @keyframes sun-breathe {
+    0%, 100% { opacity: .88; }
+    50%      { opacity: 1; }
+  }
+
+  /* ============ 贰 · 听水 ============ */
+  #scene-water { background: var(--paper-deep); }
+  .art-water {
+    background: linear-gradient(180deg, #e7dfcd 0%, #dbd2ba 70%, #d3c9ad 100%);
+    box-shadow: 0 24px 60px -28px rgba(25,21,16,.42);
+  }
+  .waves-wrap { position: relative; overflow: hidden; }
+  .waves-wrap svg {
+    display: block;
+    width: 200%;
+    height: auto;
+    animation: drift 14s linear infinite;
+  }
+  .waves-wrap svg.wb {
+    position: absolute;
+    left: 0; bottom: 0;
+    opacity: .4;
+    animation: drift 22s linear infinite reverse;
+  }
+  @keyframes drift {
+    from { transform: translateX(0); }
+    to   { transform: translateX(-50%); }
+  }
+  .boat {
+    position: absolute;
+    left: 26%;
+    bottom: 26%;
+    width: clamp(48px, 7%, 84px);
+    animation: boat-sway 6s ease-in-out infinite;
+    filter: drop-shadow(0 4px 4px rgba(25,21,16,.25));
+  }
+  @keyframes boat-sway {
+    0%, 100% { transform: translateY(0) rotate(-1.5deg); }
+    50%      { transform: translateY(-9px) rotate(1.5deg); }
+  }
+
+  /* ============ 叁 · 望云 ============ */
+  #scene-cloud {
+    background:
+      radial-gradient(120% 60% at 50% 0%, rgba(255,255,255,.55), transparent 60%),
+      var(--paper);
+  }
+  .art-cloud {
+    background: linear-gradient(180deg, #f2ede2 0%, #e5ddca 100%);
+    box-shadow: 0 24px 60px -28px rgba(25,21,16,.38);
+  }
+  .mist {
+    position: absolute;
+    border-radius: 50%;
+    background: radial-gradient(closest-side, rgba(250,247,238,.9), rgba(250,247,238,0) 70%);
+    filter: blur(14px);
+    pointer-events: none;
+  }
+  .mist.m1 { width: 55%; height: 34%; left: -12%; top: 44%; animation: mist-float 16s ease-in-out infinite; }
+  .mist.m2 { width: 46%; height: 28%; right: -8%; top: 58%; animation: mist-float 20s ease-in-out -6s infinite reverse; }
+  .mist.m3 { width: 60%; height: 24%; left: 22%; top: 72%; animation: mist-float 24s ease-in-out -12s infinite; }
+  @keyframes mist-float {
+    0%, 100% { transform: translateX(0); opacity: .85; }
+    50%      { transform: translateX(9%); opacity: 1; }
+  }
+  .birds path {
+    stroke-dasharray: 60;
+    stroke-dashoffset: 60;
+    animation: bird-draw 2.4s ease 1s both;
+  }
+  @keyframes bird-draw { to { stroke-dashoffset: 0; } }
+
+  /* ============ 肆 · 赏月（夜） ============ */
+  #scene-moon {
+    background: linear-gradient(180deg, var(--paper) 0%, #2a241a 9%, var(--night) 22%, var(--night) 78%, #241e14 91%, var(--paper) 100%);
+    color: #e8e0cf;
+  }
+  #scene-moon::after { background: none; }
+  #scene-moon .scene-num { color: #e8e0cf; opacity: .08; }
+  #scene-moon .prose { color: #b3a88f; }
+  #scene-moon .verse .attribution { color: #7d7460; }
+  .art-moon {
+    background:
+      radial-gradient(90% 70% at 50% 18%, #221c12 0%, var(--night) 65%);
+    box-shadow: 0 24px 70px -26px rgba(0,0,0,.75), inset 0 0 0 1px rgba(201,160,99,.18);
+  }
+  .moon {
+    position: absolute;
+    top: 17%; left: 50%;
+    width: clamp(64px, 15%, 110px);
+    aspect-ratio: 1;
+    transform: translateX(-50%);
+    border-radius: 50%;
+    background: radial-gradient(circle at 38% 34%, #e9cf9a 0%, #d3af72 48%, #b98f4e 100%);
+    box-shadow:
+      0 0 42px 10px rgba(217,181,124,.35),
+      0 0 130px 44px rgba(217,181,124,.16);
+    animation: moon-breathe 9s ease-in-out infinite;
+  }
+  .moon::after { /* 月海暗斑 */
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    background:
+      radial-gradient(circle at 62% 40%, rgba(120,86,40,.38) 0 9%, transparent 11%),
+      radial-gradient(circle at 42% 66%, rgba(120,86,40,.3) 0 7%, transparent 9%),
+      radial-gradient(circle at 68% 70%, rgba(120,86,40,.26) 0 5%, transparent 7%);
+  }
+  @keyframes moon-breathe {
+    0%, 100% { box-shadow: 0 0 42px 10px rgba(217,181,124,.35), 0 0 130px 44px rgba(217,181,124,.14); }
+    50%      { box-shadow: 0 0 52px 14px rgba(217,181,124,.5),  0 0 150px 56px rgba(217,181,124,.22); }
+  }
+  #scene-moon .verse { color: #efe7d4; }
+  .star {
+    position: absolute;
+    width: 2px; height: 2px;
+    border-radius: 50%;
+    background: #e9cf9a;
+    animation: star-twinkle 4s ease-in-out infinite;
+  }
+  @keyframes star-twinkle {
+    0%, 100% { opacity: .15; }
+    50%      { opacity: .9; }
+  }
+
+  /* ============ 卷尾 ============ */
+  .epilogue {
+    position: relative;
+    min-height: 88vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: clamp(40px, 8vh, 80px);
+    padding: clamp(80px, 12vh, 140px) 6vw;
+    text-align: center;
+  }
+  .epilogue-words {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: clamp(20px, 5vw, 72px);
+  }
+  .word {
+    writing-mode: vertical-rl;
+    font-size: clamp(34px, 5vw, 64px);
+    letter-spacing: .4em;
+    color: var(--ink);
+    cursor: default;
+    transition: color .5s ease, transform .5s ease;
+  }
+  .word:hover { color: var(--cinnabar); transform: translateY(-6px); }
+  .word small {
+    font-size: .3em;
+    color: var(--ink-faint);
+    letter-spacing: .4em;
+    padding-top: 1.4em;
+    transition: color .5s ease;
+  }
+  .word:hover small { color: var(--cinnabar); }
+
+  .colophon {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 20px;
+    color: var(--ink-soft);
+    font-size: 15px;
+    letter-spacing: .4em;
+    text-indent: .4em;
+  }
+  .colophon .seal { animation: stamp-in 1s cubic-bezier(.34,1.4,.5,1) both; }
+  @keyframes stamp-in {
+    from { opacity: 0; transform: rotate(2deg) scale(2.2); }
+    to   { opacity: 1; transform: rotate(2deg) scale(1); }
+  }
+
+  footer {
+    padding: 28px 6vw 40px;
+    text-align: center;
+    color: var(--ink-faint);
+    font-size: 13px;
+    letter-spacing: .3em;
+  }
+  footer .dot { margin: 0 .8em; color: var(--cinnabar); }
+
+  /* ============ 响应式 ============ */
+  @media (max-width: 880px) {
+    .scene {
+      grid-template-columns: 1fr;
+      gap: 44px;
+    }
+    .scene-text { order: 2; }
+    .art { order: 1; }
+    .verse { height: clamp(240px, 34vw, 340px); }
+    .hero-inner { flex-direction: row-reverse; }
+    .hero-side { display: none; }
+    .boat { bottom: 34%; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: .01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: .01ms !important;
+    }
+    html { scroll-behavior: auto; }
+  }
+</style>
+</head>
+<body>
+
+<div class="progress" id="progress"></div>
+
+<!-- ═══════════ 卷首 ═══════════ -->
+<header class="hero">
+  <div class="ink-blot"></div>
+  <div class="ink-blot b2"></div>
+
+  <div class="hero-inner">
+    <div style="position:relative">
+      <h1 class="hero-title" aria-label="山水长卷"><span>山</span><span>水</span><span>长</span><span>卷</span></h1>
+      <div class="seal hero-seal">墨客</div>
+    </div>
+    <p class="hero-side">一卷藏千里 · 墨里见江山</p>
+  </div>
+
+  <div class="scroll-hint">徐徐展卷<span class="hint-line"></span></div>
+</header>
+
+<!-- ═══════════ 壹 · 观山 ═══════════ -->
+<section class="scene" id="scene-mountain">
+  <div class="scene-num" aria-hidden="true">壹</div>
+
+  <div class="scene-text">
+    <p class="kicker reveal">观山</p>
+    <h2 class="verse reveal d1">
+      <span>远看山有色</span>
+      <span>近听水无声</span>
+      <span class="attribution">唐 · 王维</span>
+    </h2>
+    <p class="prose reveal d2">山不言，却以千仞之姿回应每一个仰望的人。晨雾散尽时，峰峦浓淡相叠，如同<em>墨迹未干</em>——最远的那一痕淡青，是画家舍不得落笔的留白。</p>
+  </div>
+
+  <div class="art art-mountain reveal d1">
+    <svg viewBox="0 0 720 520" role="img" aria-label="层叠远山与一轮红日">
+      <!-- 天际红日 -->
+      <circle class="sun" cx="520" cy="118" r="40" fill="#a63a2b" opacity=".92"/>
+      <circle cx="520" cy="118" r="40" fill="none" stroke="#a63a2b" stroke-width="1" opacity=".35" style="filter:blur(1px)"/>
+
+      <!-- 远山 -->
+      <path d="M0 520 L0 330 C 90 260, 170 300, 260 236 C 350 175, 430 258, 520 205 C 590 165, 650 196, 720 240 L720 520 Z"
+            fill="#8f887a" opacity=".38" style="filter:blur(1.2px)"/>
+      <!-- 中山 -->
+      <path d="M0 520 L0 420 C 110 372, 200 412, 310 348 C 420 288, 510 372, 610 330 C 650 314, 690 330, 720 344 L720 520 Z"
+            fill="#4a443a" opacity=".62"/>
+      <!-- 近山 -->
+      <path d="M0 520 L0 472 C 120 430, 230 478, 350 432 C 470 388, 580 462, 720 428 L720 520 Z"
+            fill="#191510" opacity=".92"/>
+      <!-- 山脊苔点 -->
+      <g fill="#191510" opacity=".55">
+        <circle cx="150" cy="462" r="2.4"/><circle cx="178" cy="472" r="1.8"/>
+        <circle cx="420" cy="446" r="2.2"/><circle cx="452" cy="456" r="1.6"/>
+        <circle cx="600" cy="452" r="2.2"/><circle cx="626" cy="460" r="1.6"/>
+      </g>
+    </svg>
+  </div>
+</section>
+
+<!-- ═══════════ 贰 · 听水 ═══════════ -->
+<section class="scene" id="scene-water">
+  <div class="scene-num" aria-hidden="true">贰</div>
+
+  <div class="scene-text">
+    <p class="kicker reveal">听水</p>
+    <h2 class="verse reveal d1">
+      <span>行到水穷处</span>
+      <span>坐看云起时</span>
+      <span class="attribution">唐 · 王维</span>
+    </h2>
+    <p class="prose reveal d2">水不争，随物赋形。它把乱石磨成卵，把千年写成此刻。行到水穷之处不必怅然——不妨坐下，看云如何<em>从谷底缓缓升起</em>。</p>
+  </div>
+
+  <div class="art art-water reveal d1">
+    <div class="waves-wrap">
+      <!-- 远岸 -->
+      <svg viewBox="0 0 720 200" style="display:block;width:100%" aria-hidden="true">
+        <path d="M0 96 C 120 58, 240 92, 360 62 C 470 36, 590 78, 720 56 L720 200 L0 200 Z"
+              fill="#4a443a" opacity=".28" style="filter:blur(1px)"/>
+      </svg>
+      <!-- 一叶扁舟 -->
+      <svg class="boat" viewBox="0 0 60 44" aria-hidden="true">
+        <path d="M4 30 Q30 46 56 30 L50 38 Q30 50 10 38 Z" fill="#191510"/>
+        <path d="M30 30 L30 6 Q42 14 44 26" fill="none" stroke="#191510" stroke-width="2.4" stroke-linecap="round"/>
+      </svg>
+      <!-- 双层水波 -->
+      <svg class="wb" viewBox="0 0 2880 120" preserveAspectRatio="none" style="height:46%" aria-hidden="true">
+        <path fill="#191510" opacity=".5" d="M0 52 Q90 26 180 52 T360 52 T540 52 T720 52 T900 52 T1080 52 T1260 52 T1440 52 T1620 52 T1800 52 T1980 52 T2160 52 T2340 52 T2520 52 T2700 52 T2880 52 V120 H0 Z"/>
+      </svg>
+      <svg viewBox="0 0 2880 120" preserveAspectRatio="none" style="height:40%" aria-hidden="true">
+        <path fill="#191510" d="M0 58 Q90 30 180 58 T360 58 T540 58 T720 58 T900 58 T1080 58 T1260 58 T1440 58 T1620 58 T1800 58 T1980 58 T2160 58 T2340 58 T2520 58 T2700 58 T2880 58 V120 H0 Z"/>
+      </svg>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════ 叁 · 望云 ═══════════ -->
+<section class="scene" id="scene-cloud">
+  <div class="scene-num" aria-hidden="true">叁</div>
+
+  <div class="scene-text">
+    <p class="kicker reveal">望云</p>
+    <h2 class="verse reveal d1">
+      <span>只在此山中</span>
+      <span>云深不知处</span>
+      <span class="attribution">唐 · 贾岛</span>
+    </h2>
+    <p class="prose reveal d2">云深不知处，才是好去处。山被云藏起一半，剩下的一半留给想象。飞鸟掠过时也不惊扰它——<em>云是山的呼吸</em>，慢得让人愿意把心事放下。</p>
+  </div>
+
+  <div class="art art-cloud reveal d1">
+    <div class="mist m1"></div>
+    <div class="mist m2"></div>
+    <div class="mist m3"></div>
+    <svg viewBox="0 0 720 480" style="display:block;width:100%" role="img" aria-label="云雾缭绕的山峦与飞鸟">
+      <!-- 飞鸟 -->
+      <g class="birds" stroke="#191510" stroke-width="2.6" fill="none" stroke-linecap="round">
+        <path d="M150 96 Q160 84 170 96 Q180 84 190 96"/>
+        <path d="M210 122 Q218 112 226 122 Q234 112 242 122" stroke-width="2.2"/>
+        <path d="M262 88 Q269 79 276 88 Q283 79 290 88" stroke-width="1.8"/>
+      </g>
+      <!-- 远山 -->
+      <path d="M0 480 L0 300 C 100 238, 190 280, 300 224 C 400 176, 500 250, 600 208 C 650 188, 690 202, 720 216 L720 480 Z"
+            fill="#726b5d" opacity=".34" style="filter:blur(1.4px)"/>
+      <!-- 云中山 -->
+      <path d="M0 480 L0 380 C 130 336, 240 384, 360 322 C 470 268, 580 348, 720 312 L720 480 Z"
+            fill="#33302a" opacity=".6"/>
+      <!-- 近岸 -->
+      <path d="M0 480 L0 452 C 160 424, 300 456, 460 436 C 580 422, 660 440, 720 436 L720 480 Z"
+            fill="#191510" opacity=".9"/>
+    </svg>
+  </div>
+</section>
+
+<!-- ═══════════ 肆 · 赏月 ═══════════ -->
+<section class="scene" id="scene-moon">
+  <div class="scene-num" aria-hidden="true">肆</div>
+
+  <div class="scene-text">
+    <p class="kicker reveal">赏月</p>
+    <h2 class="verse reveal d1">
+      <span>明月出天山</span>
+      <span>苍茫云海间</span>
+      <span class="attribution">唐 · 李白</span>
+    </h2>
+    <p class="prose reveal d2">夜色研墨，明月作印。照过李白的月光，今夜也照在窗前的茶盏里。千年前与千年后，<em>原是同一晚</em>。</p>
+  </div>
+
+  <div class="art art-moon reveal d1">
+    <div class="moon"></div>
+    <!-- 疏星 -->
+    <span class="star" style="left:16%; top:14%"></span>
+    <span class="star" style="left:28%; top:32%; animation-delay:1.2s"></span>
+    <span class="star" style="left:12%; top:48%; animation-delay:2.1s"></span>
+    <span class="star" style="left:82%; top:20%; animation-delay:.6s"></span>
+    <span class="star" style="left:70%; top:38%; animation-delay:1.8s"></span>
+    <span class="star" style="left:88%; top:52%; animation-delay:2.8s"></span>
+
+    <svg viewBox="0 0 720 480" style="display:block;width:100%" aria-label="月下远山">
+      <!-- 云海 -->
+      <ellipse cx="240" cy="330" rx="200" ry="26" fill="#3a3222" opacity=".5" style="filter:blur(10px)"/>
+      <ellipse cx="540" cy="352" rx="230" ry="30" fill="#332c1e" opacity=".45" style="filter:blur(12px)"/>
+      <!-- 月下远山 -->
+      <path d="M0 480 L0 350 C 90 300, 180 336, 280 288 C 380 242, 470 314, 570 280 C 640 256, 690 274, 720 286 L720 480 Z"
+            fill="#0c0a07"/>
+      <!-- 近山 -->
+      <path d="M0 480 L0 428 C 140 396, 260 432, 400 404 C 540 378, 640 416, 720 404 L720 480 Z"
+            fill="#060503"/>
+      <!-- 水面月光倒影 -->
+      <g stroke="#c9a063" stroke-linecap="round" opacity=".5">
+        <line x1="330" y1="446" x2="390" y2="446" stroke-width="2"/>
+        <line x1="344" y1="456" x2="376" y2="456" stroke-width="1.6" opacity=".7"/>
+        <line x1="352" y1="464" x2="368" y2="464" stroke-width="1.2" opacity=".5"/>
+      </g>
+    </svg>
+  </div>
+</section>
+
+<!-- ═══════════ 卷尾 ═══════════ -->
+<div class="epilogue">
+  <div class="epilogue-words">
+    <div class="word reveal">观山<small>MOUNT</small></div>
+    <div class="word reveal d1">听水<small>LISTEN</small></div>
+    <div class="word reveal d2">望云<small>CLOUD</small></div>
+    <div class="word reveal d3">赏月<small>MOON</small></div>
+  </div>
+
+  <div class="colophon">
+    <div class="seal">以墨会友</div>
+    <p>乙巳年 · 秋&nbsp;&nbsp;于灯下展卷</p>
+  </div>
+</div>
+
+<footer>
+  山水长卷<span class="dot">◇</span>纸上一江湖<span class="dot">◇</span>慢慢走，欣赏啊
+</footer>
+
+<script>
+  // 展卷进度
+  const bar = document.getElementById('progress');
+  addEventListener('scroll', () => {
+    const h = document.documentElement;
+    const p = h.scrollTop / (h.scrollHeight - h.clientHeight);
+    bar.style.transform = 'scaleX(' + (p || 0) + ')';
+  }, { passive: true });
+
+  // 滚动浮现
+  const io = new IntersectionObserver(entries => {
+    for (const e of entries) {
+      if (e.isIntersecting) {
+        e.target.classList.add('in');
+        io.unobserve(e.target);
+      }
+    }
+  }, { threshold: 0.25, rootMargin: '0px 0px -6% 0px' });
+  document.querySelectorAll('.reveal').forEach(el => io.observe(el));
+</script>
+
+</body>
+</html>

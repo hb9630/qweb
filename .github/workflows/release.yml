@@ -8,6 +8,10 @@ on:
     tags: ["v*"]
   workflow_dispatch: {}
 
+# 挂 Release 需要（新仓库默认 workflow permissions 只读，不声明则 403）
+permissions:
+  contents: write
+
 jobs:
   windows:
     runs-on: windows-latest

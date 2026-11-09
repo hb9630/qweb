@@ -3,6 +3,7 @@ name = "qweb-server"
 version = "0.1.0"
 edition = "2021"
 description = "qweb 服务进程：bind/信号/启动日志（业务在 qweb-core）；desktop feature = Windows Tauri 壳"
+license = "Apache-2.0"
 
 # 产物名对齐部署名：target/release/qweb → /usr/local/qweb（make/make install 同款语义）
 [[bin]]

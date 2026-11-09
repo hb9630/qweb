@@ -3,6 +3,7 @@ name = "qweb-core"
 version = "0.1.0"
 edition = "2021"
 description = "qweb 后端核心：会话管道/fs API/历史回放/静态嵌入（lib，Tauri 壳与 server bin 共用）"
+license = "Apache-2.0"
 
 [dependencies]
 axum = { version = "0.8", features = ["ws"] }

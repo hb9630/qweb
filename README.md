@@ -182,3 +182,7 @@ cd frontend && node test/askform-check.mjs                  # AskUserQuestion �
 cd frontend && node test/replay-check.mjs                   # 刷新回放：表单落定卡选项齐全高亮还原
 cd frontend && node test/multi-select-test.mjs              # playwright UI 冒烟（多选/拖放/跟随等）
 ```
+
+## License
+
+Apache-2.0（见 [LICENSE](LICENSE)）。
