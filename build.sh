@@ -14,10 +14,10 @@ mode=${1:-build}
 
 # ---------- 清理（= make clean） ----------
 if [ "$mode" = "clean" ]; then
-  rm -f "$root/ccweb" "$root/qtom"
+  rm -f "$root/ccweb" "$root/ccweb.exe" "$root/qtom" "$root/qtom.exe"
   rm -rf "$root/frontend/dist"
   (cd "$root/backend" && cargo clean)
-  echo "✓ 已清理：./ccweb、./qtom、frontend/dist、backend/target"
+  echo "✓ 已清理：./ccweb、frontend/dist、backend/target"
   exit 0
 fi
 
@@ -30,13 +30,14 @@ if [ "$mode" = "build" ] && [ "${CCWEB_NO_RUST:-}" = "1" ]; then
   exit 0
 fi
 
-echo "==> 2/2 Rust 构建（backend/target/release/ccweb → ./ccweb，qtom → ./qtom；前端全量嵌入，发布拷两个文件）"
-(cd "$root/backend" && cargo build --release -p ccweb-server -p qtom)
-cp "$root/backend/target/release/ccweb" "$root/ccweb"
-cp "$root/backend/target/release/qtom" "$root/qtom"
-chmod 755 "$root/ccweb" "$root/qtom"
-mb=$(awk -v b="$(wc -c < "$root/ccweb" | tr -d ' ')" 'BEGIN{printf "%.1f", b/1024/1024}')
-echo "完成：./ccweb（${mb}MB）+ ./qtom（qtom 引擎随行）"
+echo "==> 2/2 Rust 构建（backend/target/release/ccweb → ./ccweb；前端全量嵌入，单文件发布。qtom 已移出编译——代码保留在 backend/qtom/，见 backend/Cargo.toml 注释）"
+(cd "$root/backend" && cargo build --release -p ccweb-server)
+exe=""
+[ "$(uname -s)" = "Linux" ] || [ "$(uname -s)" = "Darwin" ] || exe=".exe"
+cp "$root/backend/target/release/ccweb${exe}" "$root/ccweb${exe}"
+chmod 755 "$root/ccweb${exe}"
+mb=$(awk -v b="$(wc -c < "$root/ccweb${exe}" | tr -d ' ')" 'BEGIN{printf "%.1f", b/1024/1024}')
+echo "完成：./ccweb${exe}（${mb}MB）"
 [ "$mode" = "build" ] && exit 0
 
 # ---------- 部署（= make install；Linux + systemd；rm -rf 连旧版目录形态一并清掉；sudo 只碰落位/系统位） ----------
@@ -46,7 +47,6 @@ echo "==> 部署（${DEST}，port=${PORT}）"
 sudo rm -rf "$DEST"
 sudo mkdir -p "$DEST"
 sudo install -m 755 "$root/ccweb" "$DEST/ccweb"
-sudo install -m 755 "$root/qtom" "$DEST/qtom"
 
 user=$(id -un)
 home=$(getent passwd "$user" | cut -d: -f6)

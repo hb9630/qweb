@@ -4,3 +4,5 @@ target/
 /ccweb
 /qtom
 *.log
+/ccweb.exe
+/qtom.exe

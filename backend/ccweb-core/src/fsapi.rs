@@ -62,11 +62,21 @@ pub async fn dirs_list(_app: &App, query: Option<&str>) -> Response<Body> {
     let hidden = query_param(query, "hidden").as_deref() == Some("1");
     let root_level = q.is_empty() || q == "/";
     if crate::config::IS_WIN && root_level {
+        // 并发探测 + 单盘 300ms 上限：不存在的盘（空光驱/断开的网络映射）metadata 可挂
+        // 到 Windows 层探测超时（实测串行累计 21s）——总耗时以最慢单盘为界
+        let probes: Vec<(char, _)> = (b'A'..=b'Z')
+            .map(|c| {
+                let p = format!("{}:/", c as char);
+                (c as char, tokio::spawn(async move {
+                    tokio::time::timeout(std::time::Duration::from_millis(300), tokio::fs::metadata(&p))
+                        .await.map(|r| r.is_ok()).unwrap_or(false)
+                }))
+            })
+            .collect();
         let mut drives = vec![];
-        for c in b'A'..=b'Z' {
-            let d = format!("{}:", c as char);
-            if tokio::fs::metadata(format!("{d}/")).await.is_ok() {
-                drives.push(d);
+        for (c, h) in probes {
+            if h.await.unwrap_or(false) {
+                drives.push(format!("{c}:"));
             }
         }
         return json_resp(StatusCode::OK, json!({ "path": "", "dirs": drives, "drives": true }));

@@ -2,7 +2,7 @@
 // 铺满全宽（App 侧 absolute inset-0），头部即全局标题栏（左上三件套：cwd chip 开关目录树 /
 // ▾ 历史工作目录 / 换目录选择器 DirPicker）。目录树/编辑器浮层由 App 叠在本层之上。
 // 支持两种形态：live 会话（WS 双向）与只读历史回放（/api/history/{id}）
-import { useEffect, useLayoutEffect, useReducer, useRef, useState, useCallback, useMemo } from "react";
+import { useEffect, useLayoutEffect, useReducer, useRef, useState, useCallback, useMemo, type KeyboardEvent } from "react";
 import type { StickToBottomContext } from "use-stick-to-bottom";
 import { Conversation, ConversationContent, ConversationScrollButton } from "@/components/ai-elements/conversation";
 import { Message, MessageContent, MessageResponse } from "@/components/ai-elements/message";
@@ -14,9 +14,10 @@ import {
 } from "@/components/ai-elements/prompt-input";
 import { cn } from "@/lib/utils";
 import { API, BASE, setHashSid } from "@/lib/api";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { CircleStop, FolderOpen, History, Plus, MessageSquare, RefreshCw, Loader2, X, Check, Shrink, Eraser, Zap, ListTodo, FilePen, Sparkles, FastForward, ShieldAlert, Ban, Paperclip, ArrowUp, Clock, Copy, ChevronDown, FolderSync, Cat, File as FileIcon } from "lucide-react";
+import { CircleStop, FolderOpen, History, Plus, MessageSquare, RefreshCw, Loader2, X, Check, Shrink, Eraser, Zap, ListTodo, FilePen, Sparkles, FastForward, ShieldAlert, Ban, Paperclip, ArrowUp, Clock, Copy, ChevronDown, FolderSync, Cat, File as FileIcon, HelpCircle } from "lucide-react";
 import DirPicker from "./DirPicker";
 import type { UIBlock } from "./types";
 
@@ -26,9 +27,11 @@ type Action =
   | { t: "replay"; events: any[] }
   | { t: "user"; text: string; imgs?: number }
   | { t: "perm"; rid: string; allow: boolean }
+  | { t: "formAns"; rid: string; summary: string; answers?: Record<string, string | string[]> } // 表单提交/跳过落账（done 整卡保留，answers 供选项高亮）
   | { t: "note"; text: string }
   | { t: "clear" }
   | { t: "connected"; v: boolean }
+  | { t: "model"; v: string } // 乐观模型显示（set_model 回包不回显，下一轮 message_start 校真）
   | { t: "exit" };
 
 // 权限模式（CLI v2.1 实测合法值；bypassPermissions 需 --dangerously-skip-permissions 启动，不提供）
@@ -43,7 +46,7 @@ const MODES = [
 // 别名由 CLI 经 ANTHROPIC_DEFAULT_*_MODEL 解析，恒有效；任意 ID 仍可自由输入（代理端校验）
 const MODEL_PRESETS = ["sonnet", "opus", "haiku", "default"];
 // 斜杠命令无兜底死列表：真清单只来自 live 会话 init.slash_commands（含 skills）；
-// 无会话/未启动时如实提示，不放假数据误导
+// 无会话/未启动时如实提示，不放假数据误导（后端 spawn 即唤醒 CLI 下发 init，无需等首轮消息）
 const SLASH_DESC: Record<string, string> = {
   compact: "压缩上下文", model: "查看/切换模型", effort: "思考力度", clear: "清屏",
   usage: "用量统计", context: "上下文详情", agents: "子代理", mcp: "MCP 服务器",
@@ -98,10 +101,17 @@ function ccReducer(s: State, a: Action): State {
       if (s.blocks.length) return s;
       return a.events.reduce((st: State, ev: any) => ccReducer(st, { t: "cc", ev }), s);
     case "exit": return { ...s, alive: false, busy: false };
+    // 乐观模型显示：set_model 的 control_response 是光杆 success（实测不回显模型名、
+    // 也不校验非法值），点了没反馈像没生效——先显示所请求的，下一轮 message_start 校真
+    case "model": return { ...s, model: a.v };
     case "user": return { ...s, blocks: [...s.blocks, { bid: nextBid(), k: "user", text: a.text, ...(a.imgs ? { imgs: a.imgs } : {}) }], busy: true };
     // 审批决定本地落账（WS 回包照发；重复/迟到回包 CLI 侧自会忽略）
     case "perm":
       return { ...s, blocks: s.blocks.map((b) => b.k === "ask" && b.rid === a.rid ? { ...b, done: a.allow ? "allow" as const : "deny" as const } : b) };
+    // 表单作答/跳过落账（WS 回包照发；tool_result 到达的兜底落定见 user 分支）
+    case "formAns":
+      return { ...s, blocks: s.blocks.map((b) => b.k === "form" && b.rid === a.rid && !b.done
+        ? { ...b, done: { summary: a.summary, answers: a.answers } } : b) };
     case "note": return { ...s, blocks: [...s.blocks, { bid: nextBid(), k: "note", text: a.text }] };
     case "clear": return { ...s, blocks: [], partial: null };
     case "cc": {
@@ -139,6 +149,20 @@ function ccReducer(s: State, a: Action): State {
       if (ev.type === "control_request") {
         const r = ev.request ?? {};
         if (r.subtype === "can_use_tool") {
+          // AskUserQuestion 走结构化表单块（单选/多选/其他输入，TUI 同款）；
+          // 空壳/畸形题面退回通用权限卡兜底。assistant 定稿可能已建同 tuid 块（回放/
+          // live 双路径共建），此处只补写 rid（作答回包要用）
+          if (r.tool_name === "AskUserQuestion" && Array.isArray(r.input?.questions) && r.input.questions.length) {
+            const tuid = String(r.tool_use_id ?? "");
+            const i = blocks.findIndex((b: any) => b.k === "form" && b.tuid === tuid);
+            if (i >= 0) blocks[i] = { ...blocks[i], rid: String(ev.request_id ?? "") };
+            else blocks.push({
+              bid: nextBid(),
+              k: "form", rid: String(ev.request_id ?? ""), tuid,
+              questions: r.input.questions,
+            });
+            return { ...s, blocks };
+          }
           return { ...s, blocks: [...blocks, {
             bid: nextBid(),
             k: "ask", rid: String(ev.request_id ?? ""), tuid: String(r.tool_use_id ?? ""),
@@ -189,8 +213,16 @@ function ccReducer(s: State, a: Action): State {
         for (const c of ev.message?.content ?? []) {
           if (c.type === "text") finals.push({ bid: nextBid(), k: "text", text: c.text, sub });
           else if (c.type === "thinking") finals.push({ bid: nextBid(), k: "think", text: c.thinking, sub });
-          else if (c.type === "tool_use")
+          else if (c.type === "tool_use") {
             finals.push({ bid: nextBid(), k: "tool", id: c.id, name: c.name, inputJson: JSON.stringify(c.input, null, 2) ?? "", sub });
+            // AskUserQuestion 回放重建：transcript 不记 control_request 行，题面在
+            // assistant 定稿的 tool_use.input 里——此处建 form 块（rid 空，后到的
+            // control_request 补写；纯回放则由 tool_result 文本解析落定成高亮卡）
+            if (c.name === "AskUserQuestion" && Array.isArray(c.input?.questions) && c.input.questions.length
+              && !blocks.some((b: any) => b.k === "form" && b.tuid === c.id)
+              && !finals.some((b: any) => b.k === "form" && b.tuid === c.id))
+              finals.push({ bid: nextBid(), k: "form", rid: "", tuid: String(c.id), questions: c.input.questions });
+          }
         }
         const kept = blocks.filter((b: any) => !b.live);
         if (first < 0) kept.push(...finals);
@@ -219,17 +251,36 @@ function ccReducer(s: State, a: Action): State {
         }
         for (const c of Array.isArray(c0) ? c0 : []) {
           if (c.type === "tool_result") {
+            // 文本化的结果内容（tool 块落定与表单兜底解析共用）
+            const rc = typeof c.content === "string" ? c.content
+              : Array.isArray(c.content) ? c.content.filter((x: any) => x.type === "text").map((x: any) => x.text).join("\n") : "";
             const i = blocks.findIndex((b: any) => b.k === "tool" && b.id === c.tool_use_id);
             if (i >= 0) {
               const b: any = blocks[i];
-              const rc = typeof c.content === "string" ? c.content
-                : Array.isArray(c.content) ? c.content.filter((x: any) => x.type === "text").map((x: any) => x.text).join("\n") : "";
               blocks[i] = { ...b, live: false, result: rc, isError: !!c.is_error };
             }
             // 权限卡片跟着落定（deny 的 tool_result 是 is_error + 拒绝文案）
             const ai = blocks.findIndex((b: any) => b.k === "ask" && b.tuid === c.tool_use_id && !b.done);
             if (ai >= 0)
               blocks[ai] = { ...blocks[ai], done: c.is_error ? "deny" : "allow" };
+            // 表单块同理（重连/回放时本地未作答）：从官方 tool_result 文本尽力还原
+            // 各题答案（"题"="值" 逐对解析；值含逗号且各段均命中该题选项 → 多选数组，
+            // 否则整串=自定义文本），供 done 卡的选项高亮
+            const fi = blocks.findIndex((b: any) => b.k === "form" && b.tuid === c.tool_use_id && !b.done);
+            if (fi >= 0) {
+              const fb: any = blocks[fi];
+              if (c.is_error) {
+                blocks[fi] = { ...fb, done: { summary: "已跳过" } };
+              } else {
+                const answers: Record<string, string | string[]> = {};
+                for (const mm of String(rc).matchAll(/"([^"]+)"="([^"]*)"/g)) {
+                  const labels = (fb.questions ?? []).find((q: any) => q.question === mm[1])?.options?.map((o: any) => o.label) ?? [];
+                  const parts = mm[2].split(",");
+                  answers[mm[1]] = parts.length > 1 && parts.every((p: string) => labels.includes(p)) ? parts : mm[2];
+                }
+                blocks[fi] = { ...fb, done: { summary: "已回答", answers: Object.keys(answers).length ? answers : undefined } };
+              }
+            }
           }
         }
         return { ...s, blocks };
@@ -421,11 +472,205 @@ function AskBlock({ b, canAct, onRespond }: {
   );
 }
 
-function BlockView({ b, canAct, onRespond }: {
+// AskUserQuestion 交互表单（TUI 同款交互）：单选圆点/多选方点 + 选项描述 + 每题"其他"
+// 自由输入；键盘 ↑↓ 在选项间移焦、空格/点击勾选、单选 Enter=选中即提交、Esc=跳过
+// （焦点在卡片内时全局 Esc 守卫放行，不打断会话）。提交经 WS perm 帧带 answers
+// （协议实测：answers 搭 updatedInput 回传，{问题文本: 标签|[标签...]|自定义文本}，
+// CLI 组装 tool_result "问题"="选项"）；答完塌缩成摘要行，tool_result 经 tuid 兜底落定
+function FormBlock({ b, canAct, onRespond, onSkip }: {
+  b: Extract<UIBlock, { k: "form" }>;
+  canAct: boolean;
+  onRespond: (rid: string, answers: Record<string, string | string[]>, summary: string) => void;
+  onSkip: (rid: string) => void;
+}) {
+  const [sel, setSel] = useState<Record<number, string>>({});       // 单选：题号 → label
+  const [multi, setMulti] = useState<Record<number, string[]>>({}); // 多选：题号 → labels
+  const [other, setOther] = useState<Record<number, string>>({});   // 每题自定义文本（TUI "Other"）
+  const btnRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  // 挂载抢焦点：表单出现时会话正阻塞等待回答，第一选项即焦点（↑↓ 由此起跳）
+  useEffect(() => { if (canAct) btnRefs.current[0]?.focus(); }, []);
+
+  const opts = (qi: number) => b.questions[qi]?.options ?? [];
+  const isSel = (qi: number, oi: number) => {
+    const l = opts(qi)[oi]?.label;
+    return b.questions[qi]?.multiSelect ? (multi[qi] ?? []).includes(l) : sel[qi] === l;
+  };
+  const toggle = (qi: number, oi: number) => {
+    const l = opts(qi)[oi]?.label;
+    if (!l) return;
+    if (b.questions[qi].multiSelect)
+      setMulti((m) => ({ ...m, [qi]: (m[qi] ?? []).includes(l) ? m[qi].filter((x) => x !== l) : [...(m[qi] ?? []), l] }));
+    else {
+      setSel((v) => ({ ...v, [qi]: l }));
+      setOther((o) => ({ ...o, [qi]: "" })); // 点选项清"其他"（单选二者互斥）
+    }
+  };
+  // 提交：未作答的题不进 answers（CLI 按 no-option-selected 处理，实测允许部分作答）；
+  // forceQi/forceLabel = 单选 Enter 选中即提交的强制覆盖（setState 异步，闭包态是旧的）
+  const submit = (forceQi?: number, forceLabel?: string) => {
+    const answers: Record<string, string | string[]> = {};
+    const parts: string[] = [];
+    b.questions.forEach((q: any, qi: number) => {
+      const custom = (other[qi] ?? "").trim();
+      const picked = q.multiSelect
+        ? [...(multi[qi] ?? []), ...(custom ? [custom] : [])]
+        : custom || (qi === forceQi ? forceLabel : sel[qi]) || "";
+      if (Array.isArray(picked) ? picked.length : picked) {
+        answers[q.question] = picked;
+        parts.push(`${q.header ?? q.question}：${Array.isArray(picked) ? picked.join("、") : picked}`);
+      }
+    });
+    onRespond(b.rid, answers, parts.length ? `已回答 · ${parts.join("；")}` : "已提交（未作答）");
+  };
+  // 卡片容器收口键盘：↑↓ 选项按钮间循环移焦（焦点高亮即导航位）、Esc=跳过；
+  // 空格/Enter 在按钮上走原生 click（勾选），"其他"输入框的 Enter 在自身 onKeyDown 提交
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key === "Escape") { e.preventDefault(); if (canAct) onSkip(b.rid); return; }
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+    e.preventDefault();
+    const btns = btnRefs.current.filter(Boolean) as HTMLButtonElement[];
+    const cur = btns.indexOf(document.activeElement as HTMLButtonElement);
+    const next = cur < 0 ? 0 : (cur + (e.key === "ArrowDown" ? 1 : -1) + btns.length) % btns.length;
+    btns[next]?.focus();
+  };
+
+  // 落定态：整卡保留（不塌缩）——全部选项照常显示，选中的高亮打勾、未选的灰化，
+  // 自定义文本单独一行；answers 缺失（回放兜底未解析出）时全灰 + 摘要仍准确
+  if (b.done) {
+    const ans = (qi: number, label: string) => {
+      const v = b.done?.answers?.[b.questions[qi]?.question];
+      return Array.isArray(v) ? v.includes(label) : v === label;
+    };
+    const customOf = (qi: number) => {
+      const q: any = b.questions[qi];
+      const v = b.done?.answers?.[q?.question];
+      if (v == null) return null;
+      const labels = (q?.options ?? []).map((o: any) => o.label);
+      const cus = (Array.isArray(v) ? v : [v]).filter((x) => !labels.includes(x));
+      return cus.length ? cus.join("、") : null;
+    };
+    return (
+      <div className="my-1.5 w-full rounded-lg border border-border bg-card p-3 opacity-90">
+        <div className="flex items-center gap-1.5 text-xs font-medium text-sky-600 dark:text-sky-400">
+          {b.done.summary.startsWith("已跳过") ? <Ban className="h-3.5 w-3.5 shrink-0" /> : <Check className="h-3.5 w-3.5 shrink-0" />}
+          {b.done.summary.replace("已回答 · ", "已回答：")}
+        </div>
+        {b.questions.map((q: any, qi: number) => (
+          <div key={qi} className="mt-2">
+            <div className="flex items-baseline gap-1.5">
+              <span className="shrink-0 rounded bg-sky-500/20 px-1 py-px font-mono text-[0.625rem] text-sky-700 dark:text-sky-300">{q.header || "问题"}</span>
+              <span className="min-w-0 text-xs font-medium text-foreground/90">{q.question}</span>
+            </div>
+            <div className="mt-1 flex flex-col gap-1">
+              {opts(qi).map((o: any, oi: number) => (
+                <div key={oi}
+                  className={cn("flex items-start gap-2 rounded-md border px-2 py-1.5",
+                    ans(qi, o.label) ? "border-sky-500/70 bg-sky-500/20" : "border-border bg-background opacity-45")}>
+                  <span className={cn("mt-0.5 flex h-3.5 w-3.5 shrink-0 items-center justify-center border",
+                    q.multiSelect ? "rounded-[3px]" : "rounded-full",
+                    ans(qi, o.label) ? "border-sky-500 bg-sky-500 text-white" : "border-muted-foreground/50")}>
+                    {ans(qi, o.label) && <Check className="h-2.5 w-2.5" />}
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block text-xs font-medium leading-snug text-foreground/90">{o.label}</span>
+                    {o.description && <span className="block text-[0.6875rem] leading-snug text-muted-foreground">{o.description}</span>}
+                  </span>
+                </div>
+              ))}
+              {customOf(qi) && (
+                <div className="flex items-center gap-2 rounded-md border border-sky-500/70 bg-sky-500/20 px-2 py-1.5 text-xs">
+                  <span className="shrink-0 text-[0.625rem] text-muted-foreground">其他</span>
+                  <span className="min-w-0 font-medium text-foreground/90">{customOf(qi)}</span>
+                </div>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+  let flat = 0; // 平铺按钮序的累计起点（ref 下标用；const 每题定格，防闭包串位）
+  return (
+    <div data-form="pending" tabIndex={-1} onKeyDown={onKey}
+      className="my-1.5 w-full rounded-lg border border-border bg-card p-3 shadow-sm">
+      <div className="flex items-center gap-1.5 text-xs font-medium text-sky-700 dark:text-sky-300">
+        <HelpCircle className="h-3.5 w-3.5 shrink-0" />
+        需要你的选择
+        {b.questions.length > 1 && <span className="text-muted-foreground">（{b.questions.length} 个问题）</span>}
+      </div>
+      {b.questions.map((q: any, qi: number) => {
+        const start = flat; flat += opts(qi).length;
+        return (
+        <div key={qi} className={qi ? "mt-3" : "mt-2"}>
+          <div className="flex items-baseline gap-1.5">
+            <span className="shrink-0 rounded bg-sky-500/20 px-1 py-px font-mono text-[0.625rem] text-sky-700 dark:text-sky-300">{q.header || "问题"}</span>
+            <span className="min-w-0 text-xs font-medium text-foreground/90">{q.question}</span>
+            {q.multiSelect && <span className="shrink-0 text-[0.625rem] text-muted-foreground">可多选</span>}
+          </div>
+          <div className="mt-1 flex flex-col gap-1">
+            {opts(qi).map((o: any, oi: number) => {
+              const idx = start + oi;
+              return (
+              <button key={oi} ref={(el) => { btnRefs.current[idx] = el; }} type="button"
+                disabled={!canAct}
+                role={q.multiSelect ? "checkbox" : "radio"} aria-checked={isSel(qi, oi)}
+                onClick={() => toggle(qi, oi)}
+                onKeyDown={(e) => {
+                  // 单选 Enter：选中即提交（preventDefault 阻断原生 click 的二次 toggle）
+                  if (e.key === "Enter" && !q.multiSelect && canAct) {
+                    e.preventDefault();
+                    submit(qi, opts(qi)[oi]?.label);
+                  }
+                }}
+                className={cn("flex items-start gap-2 rounded-md border px-2 py-1.5 text-left transition-colors",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50",
+                  isSel(qi, oi) ? "border-sky-500/70 bg-sky-500/20" : "border-border bg-background hover:bg-accent/50")}>
+                {/* 单选圆点 / 多选方点：选中实心打勾 */}
+                <span className={cn("mt-0.5 flex h-3.5 w-3.5 shrink-0 items-center justify-center border",
+                  q.multiSelect ? "rounded-[3px]" : "rounded-full",
+                  isSel(qi, oi) ? "border-sky-500 bg-sky-500 text-white" : "border-muted-foreground/50")}>
+                  {isSel(qi, oi) && <Check className="h-2.5 w-2.5" />}
+                </span>
+                <span className="min-w-0">
+                  <span className="block text-xs font-medium leading-snug text-foreground/90">{o.label}</span>
+                  {o.description && <span className="block text-[0.6875rem] leading-snug text-muted-foreground">{o.description}</span>}
+                </span>
+              </button>
+              );
+            })}
+          </div>
+          {/* "其他"自由输入（TUI Other 同款）：单选填入即覆盖选项选择；多选与勾选并存 */}
+          <input
+            className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1 text-xs outline-none placeholder:text-muted-foreground/60 focus:border-sky-500/60 disabled:opacity-50"
+            placeholder="或填写自定义答案（其他）…"
+            disabled={!canAct}
+            value={other[qi] ?? ""}
+            onChange={(e) => {
+              setOther((o) => ({ ...o, [qi]: e.target.value }));
+              if (!b.questions[qi].multiSelect && e.target.value) setSel((v) => ({ ...v, [qi]: "" }));
+            }}
+            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); if (canAct) submit(); } }} />
+        </div>
+      );
+      })}
+      <div className="mt-2 flex items-center gap-2">
+        <Button size="sm" type="button" disabled={!canAct} onClick={() => submit()}>提交回答</Button>
+        <Button size="sm" type="button" variant="outline" disabled={!canAct} onClick={() => onSkip(b.rid)}>跳过</Button>
+        <span className="ml-auto shrink-0 text-[0.625rem] text-muted-foreground/70">↑↓ 移动 · 空格/点击 勾选 · Enter 提交 · Esc 跳过</span>
+      </div>
+    </div>
+  );
+}
+
+function BlockView({ b, canAct, onRespond, onFormRespond, onFormSkip }: {
   b: UIBlock;
   canAct: boolean;
   onRespond: (rid: string, allow: boolean) => void;
+  onFormRespond: (rid: string, answers: Record<string, string | string[]>, summary: string) => void;
+  onFormSkip: (rid: string) => void;
 }) {
+  // AskUserQuestion 的 tool 块不渲染（表单卡片代表之——同一次调用两处出现会双份展示）
+  if (b.k === "tool" && b.name === "AskUserQuestion") return null;
   if (b.k === "user")
     return (
       <Message from="user" className="ml-0 justify-start">
@@ -452,6 +697,7 @@ function BlockView({ b, canAct, onRespond }: {
     );
   if (b.k === "think") return <div className={b.sub ? "pl-6 opacity-75" : undefined}><ThinkBlock b={b} /></div>;
   if (b.k === "ask") return <AskBlock b={b} canAct={canAct} onRespond={onRespond} />;
+  if (b.k === "form") return <FormBlock b={b} canAct={canAct} onRespond={onFormRespond} onSkip={onFormSkip} />;
   if (b.k === "tool") {
     let parsed: any = b.inputJson;
     try { parsed = JSON.parse(b.inputJson || "{}"); } catch {}
@@ -470,7 +716,7 @@ function BlockView({ b, canAct, onRespond }: {
 
 export default function ChatPanel({
   session, historyEvents, histGroups, onResume, onNewSession, onOpenHistory, onRefreshHistory, onToggleHistory,
-  notice, onDismissNotice, root, models, home, treeOpen, onToggleTree, onSwitchRoot, chatInset = 0,
+  root, models, home, treeOpen, onToggleTree, onSwitchRoot, chatInset = 0,
   initialEvents, pendingText, initModel,
   engines, enginePref, onEnginePref,
 }: {
@@ -485,8 +731,6 @@ export default function ChatPanel({
   onOpenHistory?: (id: string, cwd: string) => void;
   onRefreshHistory?: () => void;
   onToggleHistory?: () => void;
-  notice?: string | null;
-  onDismissNotice?: () => void;
   root?: string;
   models?: string[];
   engines?: { id: string; label: string }[]; // 可用引擎（后端 /api/env；qtom 配置 --dsweb 后出现）
@@ -519,9 +763,10 @@ export default function ChatPanel({
   const recents = (() => {
     try { return JSON.parse(localStorage.getItem("ccweb.recents") || "[]") as string[]; } catch { return []; }
   })();
-  // cwd 显示：home 子树内 ~/ 相对，外面绝对路径
+  // cwd 显示：POSIX home 子树内 ~/ 相对；win（home 为盘符形态）直接绝对路径——用户不识 ~
   const relPath = (p: string) =>
-    home && p === home ? "~" : home && p.startsWith(home + "/") ? "~" + p.slice(home.length) : p;
+    /^[A-Za-z]:\//.test(home || "") ? p
+      : home && p === home ? "~" : home && p.startsWith(home + "/") ? "~" + p.slice(home.length) : p;
   // 历史浮层：锚定按钮位置向上展开（记录按钮相对面板的坐标）
   const [view, setView] = useState<"chat" | "history">("chat");
   const [histPos, setHistPos] = useState<{ left: number; bottom: number } | null>(null);
@@ -740,7 +985,14 @@ export default function ChatPanel({
           const msg = JSON.parse(m.data);
           if (msg.t === "cc") {
             if (msg.ev?.type === "system" && msg.ev?.subtype === "init" && msg.ev?.session_id) setInitSid(msg.ev.session_id);
-            if (msg.ev?.type === "control_response") setCtrlPend(null); // 回包到达，停转圈
+            if (msg.ev?.type === "control_response") {
+              setCtrlPend(null); // 回包到达，停转圈
+              // 模式切换成功的显式反馈（实测 control_response 回显 mode + status 广播双确认，
+              // 链路本身是通的；无此 toast 时只有胶囊换字，"不知有没有生效"）
+              const mode = msg.ev.response?.response?.mode;
+              if (typeof mode === "string" && MODES.some((m) => m.id === mode))
+                toast.success(`权限模式已切换：${MODES.find((m) => m.id === mode)!.label}`);
+            }
             // 轮末送出插话队列（CLI 对轮后新消息照常处理；本地块与 CLI 回显去重见 reducer）
             if (msg.ev?.type === "result" && steerQRef.current.length && ws.readyState === 1) {
               for (const it of steerQRef.current) {
@@ -831,6 +1083,20 @@ export default function ChatPanel({
     dispatch({ t: "perm", rid, allow });
   }, []);
 
+  // AskUserQuestion 表单提交/跳过：WS perm 帧带 answers（后端注 updatedInput.answers 回
+  // CLI，协议实测）+ 本地塌缩成摘要行。跳过带空 answers：后端借此区分表单（deny 文案
+  // 用 CLI 官方的 declined to answer，模型能正确理解改问）
+  const respondForm = useCallback((rid: string, answers: Record<string, string | string[]>, summary: string) => {
+    if (wsRef.current?.readyState === 1) wsRef.current.send(JSON.stringify({ t: "perm", rid, allow: true, answers }));
+    else dispatch({ t: "note", text: "连接未就绪，回答未送达" });
+    dispatch({ t: "formAns", rid, summary, answers });
+  }, []);
+  const skipForm = useCallback((rid: string) => {
+    if (wsRef.current?.readyState === 1) wsRef.current.send(JSON.stringify({ t: "perm", rid, allow: false, answers: {} }));
+    else dispatch({ t: "note", text: "连接未就绪，跳过未送达" });
+    dispatch({ t: "formAns", rid, summary: "已跳过" });
+  }, []);
+
   // control_request 通道（set_permission_mode / set_model / …）；未连接时显式提示而非静默丢弃
   const sendCtrl = useCallback((sub: string, args: Record<string, unknown> = {}) => {
     if (wsRef.current?.readyState === 1) wsRef.current.send(JSON.stringify({ t: "ctrl", sub, args }));
@@ -842,12 +1108,16 @@ export default function ChatPanel({
     () => (models?.length ? models : MODEL_PRESETS),
     [models],
   );
-  // 切换模型：default 显式传 null（CLI 语义=回退会话默认）；自定义模型名记入最近使用
+  // 切换模型：default 显式传 null（CLI 语义=回退会话默认）；自定义模型名记入最近使用。
+  // CLI 对 set_model 只回光杆 success（不回显模型名、不预校验非法值，实测）——
+  // 乐观显示所请求的名字 + toast 确认提交，下一轮 message_start 携真名校准
   const applyModel = useCallback((m: string) => {
     const v = m.trim();
     if (!v) return;
     sendCtrl("set_model", { model: v === "default" ? null : v });
     setCtrlPend("model");
+    if (v !== "default") dispatch({ t: "model", v });
+    toast.info(`模型切换已提交：${v}`, { description: v === "default" ? "回会话默认模型，下一轮对话生效" : "下一轮对话生效；非法模型名将在请求时报错" });
     if (!presets.includes(v)) {
       try {
         const rec = [v, ...JSON.parse(localStorage.getItem("ccweb.models") || "[]").filter((x: string) => x !== v)].slice(0, 6);
@@ -943,6 +1213,9 @@ export default function ChatPanel({
       if (e.key !== "Escape") return;
       // 联想浮层（斜杠 / @）开着时 ESC 只关浮层（textarea 的 onKeyDown 负责），不打断会话
       if (slashOpenRef.current || atOpenRef.current) return;
+      // 表单卡片挂着且焦点在卡内：Esc 只作"跳过回答"（卡片 onKeyDown 处理），不打断会话
+      const pf = document.querySelector("[data-form='pending']");
+      if (pf && pf.contains(document.activeElement)) return;
       // Dialog 浮窗（思考全文等）开着时 ESC 只关浮窗：不拦默认行为，交给 radix；
       // 这里 preventDefault 会挡掉 radix 的关闭逻辑
       if (document.querySelector("[role='dialog']")) return;
@@ -982,7 +1255,12 @@ export default function ChatPanel({
   const claudeSid = session?.claudeSid ?? initSid ?? historyEvents?.resumeSid;
   // 新会话 init 到达才有官方 sid——此刻补写 URL 锚点（App 侧只在已知 sid 的路径写）
   useEffect(() => { if (claudeSid) setHashSid(claudeSid); }, [claudeSid]);
-  const tuiCmd = !isQtom && claudeSid && cwd ? `cd ${cwd} && claude --resume ${claudeSid}` : "";
+  // win 终端用引号+分号：PowerShell 5.1 不认 &&（cmd/Git Bash 对含空格路径也要引号）
+  const tuiCmd = !isQtom && claudeSid && cwd
+    ? /^[A-Za-z]:\//.test(cwd)
+      ? `cd "${cwd}"; claude --resume ${claudeSid}`
+      : `cd ${cwd} && claude --resume ${claudeSid}`
+    : "";
 
   return (
     <div ref={hostRef} className="relative flex h-full flex-col">
@@ -994,11 +1272,11 @@ export default function ChatPanel({
           <button
             className={cn("flex min-w-0 max-w-[30vw] items-center gap-1 rounded px-1.5 py-0.5 font-mono text-[0.625rem] transition-colors hover:bg-accent",
               treeOpen ? "bg-accent text-accent-foreground" : "text-muted-foreground")}
-            title={`工作目录：${root || "—"}（点击${treeOpen ? "收起" : "展开"}目录树）`}
+            title={`工作目录：${root || home || "—"}（点击${treeOpen ? "收起" : "展开"}目录树）`}
             onMouseDown={(e) => e.stopPropagation()}
             onClick={() => { setHdrMenu(null); onToggleTree?.(); }}>
             <FolderOpen className="h-3 w-3 shrink-0" />
-            <span className="truncate">{root ? relPath(root) : "（未设定）"}</span>
+            <span className="truncate">{root ? relPath(root) : home ? relPath(home) : "…"}</span>
           </button>
           <button
             className={cn("rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground",
@@ -1009,12 +1287,12 @@ export default function ChatPanel({
             <ChevronDown className="h-3 w-3" />
           </button>
           <button
-            className={cn("flex items-center gap-1 rounded px-1 py-0.5 text-[0.625rem] text-muted-foreground hover:bg-accent hover:text-foreground",
+            className={cn("ml-0.5 flex items-center gap-1 rounded px-1 py-0.5 text-[0.625rem] text-muted-foreground hover:bg-accent hover:text-foreground",
               hdrMenu === "picker" && "bg-accent text-accent-foreground")}
-            title="换工作目录（选择器自由导航；换目录 = 开新会话）"
+            title="切换工作目录（选择器自由导航；切换 = 开新会话）"
             onMouseDown={(e) => e.stopPropagation()}
             onClick={() => setHdrMenu((v) => (v === "picker" ? null : "picker"))}>
-            <FolderSync className="h-3 w-3" />换目录
+            <FolderSync className="h-3 w-3" />切换工作目录
           </button>
         </div>
         {/* 标题 + 紧随其后的终端续跑复制按钮（整体居中） */}
@@ -1035,17 +1313,6 @@ export default function ChatPanel({
           )}
         </span>
       </div>
-      {/* 换工作目录系统提示：明确"新会话=新 claude 实例"（历史消息在官方 transcript，可 resume 续聊）。
-          z-30：浮层组(z-20)从标题栏下方展开，notice 若不盖在其上会被树遮住左半 */}
-      {notice && (
-        <div className="relative z-30 flex h-7 shrink-0 items-center gap-2 border-b border-primary/20 bg-primary/10 px-3 text-[0.6875rem] text-foreground/80">
-          <FolderOpen className="h-3 w-3 shrink-0 text-primary/70" />
-          <span className="min-w-0 flex-1 truncate">{notice}</span>
-          <button className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground" title="关闭提示" onClick={() => onDismissNotice?.()}>
-            <X className="h-3 w-3" />
-          </button>
-        </div>
-      )}
       {/* ▾ 历史工作目录（快速切换；当前目录打勾，点选即换 = 开新会话） */}
       {hdrMenu === "recents" && (
         <div role="dialog"
@@ -1110,14 +1377,14 @@ export default function ChatPanel({
               ↑ 上面还有 {histStart} 条，向上滚动加载
             </div>
           )}
-          {s.blocks.slice(histStart).map((b) => <BlockView key={b.bid} b={b} canAct={live && s.connected && s.alive} onRespond={respondPerm} />)}
+          {s.blocks.slice(histStart).map((b) => <BlockView key={b.bid} b={b} canAct={live && s.connected && s.alive} onRespond={respondPerm} onFormRespond={respondForm} onFormSkip={skipForm} />)}
           {/* 底部状态行常驻占位（min-h-8 = 图标行满高）：busy 结束只隐去内容不收行，消息列表不跳动 */}
           <div className="flex min-h-8 items-center gap-2 px-1 text-xs text-muted-foreground">
             {s.busy && (
               <>
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                {s.blocks.some((b: any) => b.k === "ask" && !b.done)
-                  ? "等待授权…"
+                {s.blocks.some((b: any) => (b.k === "ask" || b.k === "form") && !b.done)
+                  ? s.blocks.some((b: any) => b.k === "form" && !b.done) ? "等待你的回答…" : "等待授权…"
                   : s.blocks.some((b: any) => b.live)
                     ? "回复中…"
                     : s.thinkTokens > 0 ? `思考中… ~${s.thinkTokens} tokens` : "思考中…"}
@@ -1232,10 +1499,11 @@ export default function ChatPanel({
                     ))}
                   </div>
                 ) : (
-                  // 命令清单只在 live init 下发（含 skills）——拿不到就不造假
+                  // 命令清单只在 live init 下发（含 skills）——拿不到就不造假。
+                  // 后端 spawn 即唤醒 CLI（无害 interrupt），init 连上就来，此提示只闪现一瞬
                   <div className="px-3 py-2 text-xs text-muted-foreground">
                     {live
-                      ? "会话启动中，命令清单尚未下发（首轮消息后可用）…"
+                      ? "会话进程启动中，命令清单下发中…"
                       : "暂无活动会话——发送消息恢复/新建会话后，命令联想可用"}
                   </div>
                 )}
@@ -1329,7 +1597,7 @@ export default function ChatPanel({
                   ))}
                 </div>
                 <div className="mt-1.5 border-t border-border/60 px-1 pt-1 text-[0.625rem] text-muted-foreground/70">
-                  default = 回会话默认模型；非法模型由后端校验并提示
+                  default = 回会话默认模型；CLI 不预校验模型名，非法值下一轮请求时报错
                 </div>
               </div>
             </div>

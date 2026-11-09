@@ -77,7 +77,7 @@ impl Config {
         self.ctxwin_path = format!("{}/.claude/ccweb-ctxwin.json", self.child_home);
     }
 
-    /// claude 入口：env 显式 > win32 npm-global cli.js > 惯例路径 > PATH。
+    /// claude 入口：env 显式 > win32 npm-global（新版原生 exe > 旧版 cli.js）> 惯例路径 > PATH。
     /// 返回 (bin, pre)：win 上 node 直跑 cli.js 时 pre=[cli]。
     pub fn claude_cmd(&self) -> (String, Vec<String>) {
         if let Ok(v) = std::env::var("CCWEB_CLAUDE") {
@@ -86,7 +86,10 @@ impl Config {
         if IS_WIN {
             let appdata = std::env::var("APPDATA").ok().filter(|s| !s.is_empty())
                 .unwrap_or_else(|| format!("{}/AppData/Roaming", homedir()));
-            let cli = format!("{appdata}/npm/node_modules/@anthropic-ai/claude-code/cli.js");
+            let base = format!("{appdata}/npm/node_modules/@anthropic-ai/claude-code");
+            let exe = format!("{base}/bin/claude.exe");
+            if Path::new(&exe).exists() { return (exe, vec![]); } // 新版布局：原生 exe 真身（npm shim 只转发，PATH 上无 claude.exe）
+            let cli = format!("{base}/cli.js");
             if Path::new(&cli).exists() { return ("node".into(), vec![cli]); }
             return ("claude".into(), vec![]); // 退路：PATH 里的 claude.cmd
         }
@@ -113,7 +116,7 @@ impl Config {
         !self.dsweb_url.is_empty()
     }
 
-    /// qtom 入口：env 显式 > 与本进程同目录 > PATH（与 claude_cmd 同策略）。
+    /// qtom 入口：env 显式 > 与本进程同目录（win 产物带 .exe）> PATH（与 claude_cmd 同策略）。
     /// qtom 自读 transcript：其 $HOME/.claude/projects 随 child_env 的 HOME 对齐 cfg.projects。
     pub fn qtom_cmd(&self) -> String {
         if let Ok(v) = std::env::var("CCWEB_QTOM") {
@@ -121,9 +124,15 @@ impl Config {
         }
         if let Ok(me) = std::env::current_exe() {
             if let Some(dir) = me.parent() {
-                let candidate = dir.join("qtom");
-                if candidate.exists() {
-                    return candidate.to_string_lossy().into_owned();
+                #[cfg(windows)]
+                let names = ["qtom.exe", "qtom"];
+                #[cfg(not(windows))]
+                let names = ["qtom"];
+                for name in names {
+                    let candidate = dir.join(name);
+                    if candidate.exists() {
+                        return candidate.to_string_lossy().into_owned();
+                    }
                 }
             }
         }

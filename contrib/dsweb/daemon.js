@@ -26,6 +26,7 @@ const PROFILE_DIR = process.env.PROFILE_DIR || path.join(os.homedir(), '.dsweb/p
 const HEADLESS = process.env.DSWEB_HEADLESS === '1';
 const TIMEOUT_MS = +(process.env.DSWEB_TIMEOUT_MS || 180000);
 const IS_MAC = process.platform === 'darwin';
+const IS_WIN = process.platform === 'win32';
 const ADAPTERS_DIR = path.join(__dirname, 'adapters');
 
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
@@ -98,10 +99,17 @@ async function ensureXvfb() {
   throw new Error('Xvfb 起不来（无头 Linux 需装 xvfb；macOS 不需要）');
 }
 
-// 浏览器探测：env 显式 > macOS 常规装位 > Linux playwright 缓存 > PATH 兜底
+// 浏览器探测：env 显式 > 各平台常规装位 > Linux playwright 缓存 > PATH 兜底
+// （Windows 注意：CHROME_BIN 须给 cmd 风格路径 C:\...，git-bash 的 /c/... spawn 不了）
 const defaultChrome = (() => {
   const cands = [];
-  if (IS_MAC) {
+  if (IS_WIN) {
+    const pf = [process.env.ProgramFiles, process.env['ProgramFiles(x86)'], process.env.LOCALAPPDATA].filter(Boolean);
+    for (const base of pf) {
+      cands.push(path.join(base, 'Google', 'Chrome', 'Application', 'chrome.exe'));
+    }
+    cands.push(path.join(process.env.ProgramFiles || 'C:\\Program Files', 'Microsoft', 'Edge', 'Application', 'msedge.exe')); // Chromium 内核兜底
+  } else if (IS_MAC) {
     cands.push('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
                '/Applications/Chromium.app/Contents/MacOS/Chromium',
                '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge');
@@ -111,23 +119,25 @@ const defaultChrome = (() => {
     const v = fs.readdirSync(base).filter((d) => d.startsWith('chromium-')).sort().pop();
     if (v) cands.push(path.join(base, v, IS_MAC ? 'chrome-mac/Chromium.app/Contents/MacOS/Chromium' : 'chrome-linux/chrome'));
   } catch { /* 无 playwright 缓存 */ }
-  return cands.find((c) => fs.existsSync(c)) || (IS_MAC ? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' : 'chromium');
+  const fallback = IS_WIN ? 'chrome.exe' : IS_MAC ? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' : 'chromium';
+  return cands.find((c) => fs.existsSync(c)) || fallback;
 })();
 const CHROME_BIN = process.env.CHROME_BIN || defaultChrome;
 
 async function ensureChromium() {
   try { await cdpHttp('/json/version'); return; } catch {}
-  if (!HEADLESS && !IS_MAC) await ensureXvfb(); // 无头不需要 display；有头 Linux 借 Xvfb
+  // 无头不需要 display；有头 Linux 借 Xvfb；macOS/Windows 自带桌面直接开
+  if (!HEADLESS && !IS_MAC && !IS_WIN) await ensureXvfb();
   fs.mkdirSync(path.dirname(PROFILE_DIR), { recursive: true });
   log('拉起浏览器 ' + CHROME_BIN + (HEADLESS ? '（无头）' : ''));
   const env = { ...process.env };
-  if (!HEADLESS && !IS_MAC) env.DISPLAY = `:${DISPLAY_NO}`;
+  if (!HEADLESS && !IS_MAC && !IS_WIN) env.DISPLAY = `:${DISPLAY_NO}`;
   chromeProc = spawn(CHROME_BIN, [
-    ...(IS_MAC || HEADLESS ? [] : ['--no-sandbox']), // 仅 Linux 有头 root 场景；macOS 弹警告条
+    ...(IS_MAC || IS_WIN || HEADLESS ? [] : ['--no-sandbox']), // 仅 Linux 有头 root 场景；macOS 弹警告条
     ...(HEADLESS ? ['--headless=new'] : []),
     `--user-data-dir=${PROFILE_DIR}`,
     '--no-first-run', '--no-default-browser-check',
-    ...(IS_MAC || HEADLESS ? [] : ['--disable-dev-shm-usage']),
+    ...(IS_MAC || IS_WIN || HEADLESS ? [] : ['--disable-dev-shm-usage']),
     '--window-size=1280,900',
     `--remote-debugging-port=${CDP_PORT}`,
     adapter.homeUrl,
@@ -432,5 +442,5 @@ const server = http.createServer(async (req, res) => {
   res.end(JSON.stringify({ error: { message: 'not found' }, hint: 'POST /v1/chat/completions, GET /health' }));
 });
 
-server.listen(PORT, '127.0.0.1', () => log(`dsweb daemon 听 127.0.0.1:${PORT}（CDP :${CDP_PORT} · adapter ${adapter.name}@${adapter.version}${IS_MAC ? ' · macOS 有头' : HEADLESS ? ' · 无头' : ` · Xvfb :${DISPLAY_NO}`}）`));
+server.listen(PORT, '127.0.0.1', () => log(`dsweb daemon 听 127.0.0.1:${PORT}（CDP :${CDP_PORT} · adapter ${adapter.name}@${adapter.version}${IS_WIN ? ' · win 有头' : IS_MAC ? ' · macOS 有头' : HEADLESS ? ' · 无头' : ` · Xvfb :${DISPLAY_NO}`}）`));
 

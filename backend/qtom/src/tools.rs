@@ -104,7 +104,13 @@ pub async fn edit(cwd: &str, input: &Value) -> Result<String, String> {
 pub async fn bash(cwd: &str, env_home: &str, input: &Value) -> Result<String, String> {
     let cmd = str_arg(input, "command")?;
     let timeout = input.get("timeout_ms").and_then(|v| v.as_u64()).unwrap_or(30_000).min(120_000);
-    let mut c = tokio::process::Command::new("sh");
+    // Windows 系统 PATH 无 sh：取 Git for Windows 常规装位（命中前缀带 .exe 的完整路径）
+    #[cfg(windows)]
+    let sh = [r"C:\Program Files\Git\bin\sh.exe", r"C:\Program Files\Git\usr\bin\sh.exe"]
+        .into_iter().find(|c| Path::new(c).exists()).unwrap_or("sh");
+    #[cfg(not(windows))]
+    let sh = "sh";
+    let mut c = tokio::process::Command::new(sh);
     c.arg("-c").arg(&cmd).current_dir(cwd).env("HOME", env_home).env("TERM", "xterm-256color")
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())

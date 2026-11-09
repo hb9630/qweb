@@ -18,6 +18,11 @@ export type UIBlock = { bid: number } & (
     }
   // 权限询问卡片：rid=request_id（回包用）、tuid=tool_use_id（tool_result 关联解决态）
   | { k: "ask"; rid: string; tuid: string; tool: string; inputJson: string; done?: "allow" | "deny" }
+  // AskUserQuestion 交互表单（TUI 同款单选/多选/其他输入）：questions 为 CLI 下发的
+  // 结构化题面 [{question,header,options:[{label,description}],multiSelect}]；
+  // done 落定后整卡保留（选项不塌缩）：summary=确认文案，answers=各题答案
+  // （问题文本 → 标签|[标签...]|自定义文本；重连/回放由 tool_result 文本尽力还原）
+  | { k: "form"; rid: string; tuid: string; questions: any[]; done?: { summary: string; answers?: Record<string, string | string[]> } }
   | { k: "stats"; durMs: number; cost: number; tokens: number }
   | { k: "note"; text: string }
 );

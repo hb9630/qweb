@@ -34,6 +34,29 @@ CCWEB_NO_RUST=1 ./build.sh            # 只出前端（开发够用）
 (cd frontend && npm run dev)                # 前端开发（vite HMR）
 ```
 
+### Windows 本地开发：GNU link.exe 冒充 MSVC 链接器的坑
+
+前置：VS Build Tools（MSVC v142 + Windows 10 SDK）+ Rust `stable-x86_64-pc-windows-msvc`。
+
+**坑**：Git Bash 环境下 `cargo build` 链接期报
+`linking with link.exe failed` / `link: extra operand '....rcgu.o'` / `Try 'link --help'`——
+这是 **GNU coreutils 的 `link`**（建硬链接的小工具，Git for Windows 装在
+`C:\Program Files\Git\usr\bin\link.exe`，还有 `coreutils\bin` 变体）冒充了 MSVC 链接器：
+rustc 按 PATH 找 `link.exe`，Git 的 usr/bin 抢在前面，它不认识链接器参数。真 MSVC
+link.exe 在 VS Build Tools 里且**不在 PATH**（需 vcvars 激活），所以裸 cargo 必然中招。
+
+**解法**：构建跑在 vcvars 环境里（同时就位真 link.exe 与 LIB/INCLUDE）：
+
+```bat
+call "C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
+cd /d <repo>\backend && cargo build -p ccweb-server
+```
+
+或固化为包装脚本（本机已放 `~/build-msvc.cmd`，用法 `build-msvc.cmd [--release -p ccweb-server]`）。
+
+其余 Windows 适配已落码：build.sh 产物 `ccweb.exe` 后缀、qtom bash 工具探测 Git Bash 的
+sh.exe、daemon（contrib/dsweb）Chrome 探测含 Windows 装位且不走 Xvfb。
+
 正式部署 `./build.sh deploy`（见下）。
 
 ## 部署
@@ -130,7 +153,13 @@ spawn 恒带 `--permission-prompt-tool stdio`（CLI ≥2.1，SDK canUseTool 同�
 - 渲染：子代理事件（`parent_tool_use_id` 非空）缩进弱化；思考 token 增量计数
   （"思考中… ~N tokens"）；MCP 工具名 `mcp__srv__tool` 美化为 `mcp:srv/tool`。
 
-## qtom 引擎：自带的免费 agent（DeepSeek 网页版）
+## qtom 引擎：自带的免费 agent（DeepSeek 网页版）——已下线（2026-11-09）
+
+> **下线说明**：DeepSeek 网页版账号因风控被禁言（疑似工具协议拼接 + 每请求新会话的行为特征），
+> 通道停用。代码全部保留：`backend/qtom/`（crate 自洽，可 `cargo build --manifest-path qtom/Cargo.toml`
+> 独立编译）、`contrib/dsweb/`（daemon）、ccweb 后端接入（spawn/审批/resume）与前端兼容分支；
+> 已移出的部分：workspace 编译、build.sh 产物、UI 引擎入口。复活路径：账号可用后，把
+> `backend/Cargo.toml` 的 members 加回 `qtom`、恢复 build.sh 两行、去掉 App.tsx 引擎过滤即可。
 
 qtom 是内置的第二引擎——一只自研的 Rust 编码猫（qkeeper 动物园第一只居民），与 claude CLI
 同等地被 spawn（stdio 说同款 stream-json 协议），模型通道走 **DeepSeek 网页版（免费）**：

@@ -93,11 +93,13 @@ pub async fn handle_session_ws(session: Arc<Session>, socket: WebSocket) {
                             }
                         }
                         Some("perm") => {
-                            // 审批决定：{"t":"perm","rid":...,"allow":bool}
+                            // 审批决定：{"t":"perm","rid":...,"allow":bool,"answers":{问题:答案}}
+                            // answers 为 AskUserQuestion 表单作答（空/缺省 = 普通权限允许/拒绝）
                             let rid = v.get("rid").and_then(|x| x.as_str()).unwrap_or("");
                             if !rid.is_empty() {
                                 let allow = v.get("allow").and_then(|x| x.as_bool()).unwrap_or(false);
-                                session.perm_respond(rid, allow).await;
+                                let answers = v.get("answers").cloned();
+                                session.perm_respond(rid, allow, answers).await;
                             }
                         }
                         Some("interrupt") => session.interrupt().await,

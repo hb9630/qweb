@@ -4,6 +4,7 @@
 // 独立关闭（相当于把原三栏的树/编辑器搬到标题栏下面浮起）；编辑器最后一个 tab
 // 关闭仍自动收编辑器（Editor 既有语义）。手机/桌面同一结构（浮层宽 clamp 到 vw）。
 import { useCallback, useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import { API, hashSid, setHashSid } from "./lib/api";
 import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -50,11 +51,13 @@ function Resizer({ onDrag, lineAt = "-left-px" }: { onDrag: (dx: number) => void
 
 export default function App() {
   // 工作目录记忆：用户设定过（localStorage）则刷新后沿用，不再跟会话 cwd 走。
-  // 默认值不硬编码（ccweb 不总在容器里，HOME 不一定是 /root）：未知时为空，
+  // 默认值不硬编码（ccweb 不总在容器里，HOME 不一定是 /root）：未知时用上次
+  // env 下发的 HOME 缓存（ccweb.home——首访后刷新零等待，无"未设定"窗口），仍未知则空，
   // 等 /api/env 下发 HOME 后由 env effect 设定
   const savedRoot = (() => { try { return localStorage.getItem("ccweb.root"); } catch { return null; } })();
+  const cachedHome = (() => { try { return localStorage.getItem("ccweb.home"); } catch { return null; } })();
   const userRoot = useRef(!!savedRoot);
-  const [root, setRoot] = useState<string>(savedRoot || "");
+  const [root, setRoot] = useState<string>(savedRoot || cachedHome || "");
   // 打开文件请求：seq 递增保证同路径重复请求也触发（双击=钉住已开的预览）
   const [openReq, setOpenReq] = useState<{ path: string; pinned: boolean; seq: number } | null>(null);
   // 文件移动/重命名通知(树 → 编辑器):tabs 路径跟随,不再标"已删除"
@@ -157,10 +160,16 @@ export default function App() {
       .then((d: any) => {
         if (typeof d.home === "string" && d.home) {
           setHome(d.home);
+          try { localStorage.setItem("ccweb.home", d.home); } catch {} // 下次打开零等待兜底
           if (!userRoot.current) setRoot(d.home); // 从未人工设定过才用 home 兜底
         }
         if (Array.isArray(d.models)) setEnvModels(d.models.map(String));
-        if (Array.isArray(d.engines)) setEngines(d.engines);
+        if (Array.isArray(d.engines)) {
+          // qtom 通道下线（DeepSeek 账号风控）：前端入口隐藏；后端接入/历史会话兼容全保留
+          const list = d.engines.filter((e: any) => e.id !== "qtom");
+          setEngines(list);
+          setEnginePref(prev => (list.some((e: any) => e.id === prev) ? prev : "claude")); // 偏好残留回落
+        }
       })
       .catch(() => {});
   }, []);
@@ -220,8 +229,8 @@ export default function App() {
         }
       }
       // 1) server 上还有活会话（如刷新/重开标签页）→ 直接重连。
-      //    必须同时取 transcript：resume 出来的进程首条消息前不发任何事件（连 init 都没有），
-      //    buf 回放是空的——不补历史的话对话区空、模型/ctx 都没有
+      //    必须同时取 transcript：后端 spawn 即投 /model 唤醒（见 sessions.rs），init ~1s 即发，
+      //    但唤醒后 buf 只含 init+探测 result——对话历史仍需 transcript 补（n=0 时更是全靠它）
       try {
         const r = await fetch(`${API}/sessions`);
         const list = await r.json();
@@ -235,8 +244,9 @@ export default function App() {
             setRestoring(false);
             // 树不跟随会话 cwd（左树是目录唯一事实源，刷新只还原用户设定/HOME）
           };
-          // n>0：进程已发过事件，buf 回放即完整对话+init+result（再注 transcript 会渲染两份）
-          // n=0：静默 resume 进程（首条消息前无任何事件），需 transcript 补历史/模型/ctx
+          // n>0：进程已发过事件（唤醒后必为真：init+探测 result）——但那是刚 resume 的空 buf
+          //    时 pre 帧才带历史；老会话 buf 回放即完整对话（再注 transcript 会渲染两份）
+          // n=0：resume 进程唤醒尚未落地（1s 窗口内），需 transcript 补历史/模型/ctx
           if (s.n > 0 || !s.claude_sid) attach(null);
           else fetch(`${API}/history/${s.claude_sid}`).then((x) => x.json()).then(attach).catch(() => attach(null));
           return;
@@ -298,7 +308,6 @@ export default function App() {
   // 设为工作目录（唯一入口 = 标题栏三件套）：树切根 + 记忆（刷新沿用）+ 会话联动 + 记最近目录。
   // 语义（对用户可见的承诺）：换目录 = 新会话 = 新 claude 实例（cwd 在 spawn 时固化，长驻进程改不了）；
   // 旧会话消息在官方 transcript 里，历史列表可 resume 续聊；server 侧空闲 20min 自动回收进程。
-  const [wsNotice, setWsNotice] = useState<string | null>(null);
   const pushRecent = (p: string) => {
     try {
       const cur = JSON.parse(localStorage.getItem("ccweb.recents") || "[]").filter((x: string) => x !== p);
@@ -313,11 +322,12 @@ export default function App() {
     try { localStorage.setItem("ccweb.root", path); } catch {}
     // "目录树是左上角选择的结果"：选定即展开浮层（此前关着也开）
     setShowTree(true);
+    // 提示走 toast（短暂浮现自动消失）；旧会话消息在官方 transcript，可 resume 续聊
     if (live && live.cwd !== path) {
       newSession(path);
-      setWsNotice(`工作目录已切换到 ${path} —— 已开启新会话（新 claude 实例）`);
+      toast.success(`工作目录已切换到 ${path}`, { description: "已开启新会话（新 claude 实例）" });
     } else if (live) {
-      setWsNotice(`工作目录 ${path} 与当前会话一致，继续当前会话`);
+      toast.info(`工作目录 ${path} 与当前会话一致，继续当前会话`);
     }
   };
 
@@ -361,9 +371,9 @@ export default function App() {
 
   const chatProps = {
     histGroups: groups,
-    onNewSession: () => { setWsNotice(null); newSession(); },
+    onNewSession: () => newSession(),
     onOpenHistory: openHistory, onRefreshHistory: refresh, onResume: resumeChat,
-    notice: wsNotice, onDismissNotice: () => setWsNotice(null), root,
+    root,
     models: envModels,
     engines, enginePref, onEnginePref,
     home, treeOpen: showTree, onToggleTree: () => setShowTree((v) => !v),

@@ -91,7 +91,8 @@ impl Session {
             inner: Mutex::new(Inner {
                 alive: true,
                 pid: None,
-                // resume 的官方会话 ID 即入参（init 要到首条消息才发，先标上，/api/sessions 才能定位 transcript）
+                // resume 的官方会话 ID 即入参先标上（/api/sessions 定位 transcript 用；
+                // 新会话的官方 sid 由唤醒触发的 init 下发，见 spawn 尾部）
                 claude_sid: resume_sid.map(str::to_string),
                 pre,
                 buf: vec![],
@@ -190,6 +191,15 @@ impl Session {
                                             continue;
                                         }
                                         if let Ok(ev) = serde_json::from_str::<Value>(&line) {
+                                            // result 行延迟分发：on_event 要用 transcript 最后一条
+                                            // assistant 行的单请求 usage 顶替中转的整轮累计假值，
+                                            // 而 CLI 的 transcript 写入是异步 flush——result 到达
+                                            // 瞬间末行可能尚未落盘（实测差 51 token 读到前一条）。
+                                            // 等 150ms 让写盘追上；result 是一轮最后一行，阻塞
+                                            // 读取无碍（下一行必属新一轮，人手速远大于此）
+                                            if ev.get("type").and_then(|v| v.as_str()) == Some("result") {
+                                                tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+                                            }
                                             s2.on_event(ev);
                                         }
                                     }
@@ -220,6 +230,17 @@ impl Session {
                     let code = child.wait().await.ok().and_then(|st| st.code());
                     s4.mark_exit(code);
                 });
+                // 唤醒：CLI 只在首条 user 型输入（消息/斜杠命令）时才发 system/init——
+                // control_request 一律不触发（interrupt/set_permission_mode/set_model 实测
+                // 均只回 control_response，无 init）。而 slash_commands/模型/权限模式全在
+                // init 里，不唤醒则输 / 只见"清单未下发"。spawn 即投一条 TUI 专属的
+                // /model（远程环境回 "isn't available in this environment"：无 API 调用、
+                // 不回显 user 事件、不写对话行进 transcript——实测仅 local_command 行），
+                // 新会话连上即有命令清单，不必等首轮消息。qtom 不发（user 文本会真送
+                // 模型端；其 init 启动即自带）
+                if self.engine == EngineKind::Claude {
+                    self.send_user("/model", &[]).await;
+                }
             }
         }
     }
@@ -235,9 +256,20 @@ impl Session {
 
     /// 事件分发 —— 对照 onEvent（server.mjs:181-200）
     fn on_event(self: &Arc<Self>, mut ev: Value) {
-        // result.usage 体检：单请求上下文不可能超过模型窗口——超过即中转按整轮累计的
-        // 假值，用 transcript 最后一条 assistant 行的单请求 usage 顶替（ctx% 分子才可信）
-        if ev.get("type").and_then(|v| v.as_str()) == Some("result") && self.usage_exceeds_window(&ev) {
+        // 合成回显丢弃：CLI 对本地命令（唤醒探针 /model 等）会生成 model="<synthetic>"
+        // 的 assistant 事件（"isn't available in this environment"）——非模型输出，
+        // 入流会渲染成消息气泡；不入 buf 即重连/回放也永不见
+        if ev.get("type").and_then(|v| v.as_str()) == Some("assistant")
+            && ev.pointer("/message/model").and_then(|v| v.as_str()) == Some("<synthetic>")
+        {
+            return;
+        }
+        // result.usage 一律替换为 transcript 真值：中转网关把轮末 result.usage 按
+        // 整轮各请求累计（实测 2 请求轮 = 恰好 2× 真值——input/cache_read 逐项可对加），
+        // 带工具的长轮会把 ctx% 分子虚抬数倍；只有 transcript 的主行 assistant usage
+        // 是单请求真值（官方 API 下两者一致，替换无害）。transcript 暂不可得（写入
+        // 竞态/无文件）才保留原值。副作用同步惠及 WS 回放 buf 与 ctxwin 分母记忆
+        if ev.get("type").and_then(|v| v.as_str()) == Some("result") {
             let sid = self.claude_sid();
             if let Some(u) = sid.as_deref().and_then(|sid| crate::history::last_request_usage(&self.projects, sid)) {
                 ev["usage"] = u;
@@ -335,24 +367,6 @@ impl Session {
         self.inner.lock().unwrap().pre.clone()
     }
 
-    /// usage 三项之和是否超过 modelUsage 里任一模型的 contextWindow（物理不可能 → 假值）
-    fn usage_exceeds_window(&self, ev: &Value) -> bool {
-        let used = ["input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"]
-            .iter()
-            .map(|k| ev.pointer(&format!("/usage/{k}")).and_then(|v| v.as_u64()).unwrap_or(0))
-            .sum::<u64>();
-        used > 0
-            && ev
-                .pointer("/modelUsage")
-                .and_then(|v| v.as_object())
-                .map(|mu| {
-                    mu.values().any(|m| {
-                        m.get("contextWindow").and_then(|v| v.as_u64()).unwrap_or(0) > 0 && used > m.get("contextWindow").and_then(|v| v.as_u64()).unwrap_or(0)
-                    })
-                })
-                .unwrap_or(false)
-    }
-
     pub fn snapshot(&self) -> serde_json::Value {
         let inner = self.inner.lock().unwrap();
         json!({
@@ -389,12 +403,23 @@ impl Session {
     }
 
     /// 审批回包。wire 格式（CLI 2.1.212 逐字实测）：request_id 嵌在 response 内；
-    /// allow 回带 updatedInput=原 input（SDK 同款），deny 的 message 原样进 tool_result
-    pub async fn perm_respond(self: &Arc<Self>, request_id: &str, allow: bool) {
+    /// allow 回带 updatedInput=原 input（SDK 同款），deny 的 message 原样进 tool_result。
+    /// answers 非空 = AskUserQuestion 表单作答（协议 2.1.202 逆向+实测）：注入
+    /// updatedInput.answers——{问题文本: 选中标签 | [标签...] | 自定义文本}，
+    /// CLI 组装 tool_result（"问题"="选项" / 逗号并多选）
+    pub async fn perm_respond(self: &Arc<Self>, request_id: &str, allow: bool, answers: Option<Value>) {
         let input = self.inner.lock().unwrap().pending_perms.remove(request_id);
+        let is_form = answers.is_some();
         let decision = match (allow, input) {
-            (true, Some(input)) => json!({ "behavior": "allow", "updatedInput": input }),
+            (true, Some(mut input)) => {
+                if let Some(a) = answers {
+                    input["answers"] = a;
+                }
+                json!({ "behavior": "allow", "updatedInput": input })
+            }
             (true, None) => json!({ "behavior": "allow" }), // 未知/重复回包：尽力而为，CLI 侧自会去重
+            // 表单的"跳过"语义与普通权限拒绝不同（模型据此改问法），用 CLI 官方文案
+            (false, _) if is_form => json!({ "behavior": "deny", "message": "User declined to answer questions." }),
             (false, _) => json!({ "behavior": "deny", "message": "User denied via ccweb" }),
         };
         let msg = json!({

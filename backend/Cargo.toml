@@ -1,5 +1,7 @@
 [workspace]
-members = ["ccweb-core", "ccweb-server", "qtom"]
+# qtom 已移出编译（2026-11-09：DeepSeek 账号风控，通道下线）——代码保留在 qtom/，
+# 自洽可独立编译（cargo build --manifest-path qtom/Cargo.toml），复活时加回 members 即可
+members = ["ccweb-core", "ccweb-server"]
 resolver = "2"
 
 # 发布形态：单文件分发，体积优先
