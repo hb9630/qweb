@@ -95,7 +95,8 @@ export default function App() {
   })();
   const [wTree, setWTree] = useState(saved.wTree ?? 280);
   const [wEditor, setWEditor] = useState(saved.wEditor ?? Math.min(720, Math.round(window.innerWidth * 0.46)));
-  const [showTree, setShowTree] = useState(saved.showTree ?? false);
+  // 无记忆时默认展开（首开即见目录树）；用户手动收起后按记忆走
+  const [showTree, setShowTree] = useState(saved.showTree ?? true);
   const [showEditor, setShowEditor] = useState(saved.showEditor ?? false);
 
   const refresh = useCallback(async () => {
