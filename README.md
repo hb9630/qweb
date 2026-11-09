@@ -8,15 +8,16 @@ Claude Code 的流式 Web 工作台：对话（stream-json 双向管道）为全
 
 ```
 backend/            Rust 后端（cargo workspace 自持：Cargo.toml/lock、.cargo 镜像、target/ 都在这层）
-  ccweb-core/       业务核心 lib：会话管道/fs API/历史回放/静态嵌入（Tauri 壳将来直接依赖）
-  ccweb-server/     薄 bin：CLI 解析/bind/信号/启动横幅
+  ccweb-core/       业务核心 lib：会话管道/fs API/历史回放/静态嵌入
+  ccweb-server/     薄 bin：CLI 解析/bind/信号/启动横幅；common.rs 两 bin 共用；
+                    bin/desktop.rs = Windows Tauri 桌面壳（--features desktop，仅 win 编译）
 frontend/           前端（React + TypeScript + Vite）——js/mjs 全部收在这层：依赖自持，测试也在这
   src/ChatPanel     对话区（chat-first 布局底层主角，头部即全局标题栏：cwd chip 开关目录树 / ▾ 历史工作目录 / 换目录）
   src/DirPicker     工作目录选择器（面包屑自由导航 + ✓ 确认；树锁死工作目录内，换目录唯一入口）
   src/Explorer      目录树浮层（标题栏下方垂到底；右键菜单、多选、拖放、上传/下载；独立 X 关闭）
   src/Editor        编辑器浮层（贴树右侧；tab 管理与编辑）
   test/             node 测试（playwright UI 冒烟 + 服务端 e2e/resume + esbuild/jsdom 组件测试；stubs/ 为 esbuild 别名桩）
-build.sh            根目录唯一编排脚本（make/make install/make clean 语义）：构建出 ./ccweb；deploy（= install）装 /usr/local/ccweb + systemd；clean 清产物
+build.sh            根目录唯一编排脚本（make/make install/make clean 语义）：构建出 ./ccweb；desktop 出 Windows 桌面版 ./ccweb-desktop.exe；deploy（= install）装 /usr/local/ccweb + systemd；clean 清产物
 restart.sh          本机快速迭代：构建 + 重启 18090 服务（nohup ./restart.sh &；活会话断开，刷新自动 resume）
 ```
 
@@ -34,37 +35,53 @@ CCWEB_NO_RUST=1 ./build.sh            # 只出前端（开发够用）
 (cd frontend && npm run dev)                # 前端开发（vite HMR）
 ```
 
-### Windows 本地开发：GNU link.exe 冒充 MSVC 链接器的坑
+### Windows 本地开发：MSVC 环境的两个坑
 
 前置：VS Build Tools（MSVC v142 + Windows 10 SDK）+ Rust `stable-x86_64-pc-windows-msvc`。
 
-**坑**：Git Bash 环境下 `cargo build` 链接期报
+**坑 1**：Git Bash 环境下 `cargo build` 链接期报
 `linking with link.exe failed` / `link: extra operand '....rcgu.o'` / `Try 'link --help'`——
 这是 **GNU coreutils 的 `link`**（建硬链接的小工具，Git for Windows 装在
 `C:\Program Files\Git\usr\bin\link.exe`，还有 `coreutils\bin` 变体）冒充了 MSVC 链接器：
 rustc 按 PATH 找 `link.exe`，Git 的 usr/bin 抢在前面，它不认识链接器参数。真 MSVC
 link.exe 在 VS Build Tools 里且**不在 PATH**（需 vcvars 激活），所以裸 cargo 必然中招。
 
-**解法**：构建跑在 vcvars 环境里（同时就位真 link.exe 与 LIB/INCLUDE）：
+**坑 2**：vcvars64.bat 可能**检测不到已装的 Windows 10 SDK**（注册表探测失败等）——
+INCLUDE 里只有 MSVC 头文件，编 aws-lc-sys（reqwest rustls 依赖）时报
+`fatal error C1083: windows.h: No such file or directory`。SDK 明明装在
+`C:\Program Files (x86)\Windows Kits\10\`（版本按实装调整），需手动补路径。
+
+**解法**：构建跑在 vcvars 环境 + 手动补 SDK 路径的 bat 里（两个坑一次全防）：
 
 ```bat
-call "C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
-cd /d <repo>\backend && cargo build -p ccweb-server
+@echo off
+call "C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\VC\Auxiliary\Build\vcvars64.bat" >nul 2>&1
+set K=C:\Program Files (x86)\Windows Kits\10
+set INCLUDE=%INCLUDE%;%K%\Include\10.0.19041.0\ucrt;%K%\Include\10.0.19041.0\um;%K%\Include\10.0.19041.0\shared;%K%\Include\10.0.19041.0\winrt;%K%\Include\10.0.19041.0\cppwinrt
+set LIB=%LIB%;%K%\Lib\10.0.19041.0\ucrt\x64;%K%\Lib\10.0.19041.0\um\x64
+cd /d <repo>\backend && cargo build --release -p ccweb-server %*
 ```
 
-或固化为包装脚本（本机已放 `~/build-msvc.cmd`，用法 `build-msvc.cmd [--release -p ccweb-server]`）。
+注意：重构建前先停在跑的 ccweb/ccweb-desktop 进程——Windows 锁住运行中的 exe，
+cargo 换产物时报 `failed to remove file ... (os error 5)`。
 
-其余 Windows 适配已落码：build.sh 产物 `ccweb.exe` 后缀、qtom bash 工具探测 Git Bash 的
-sh.exe、daemon（contrib/dsweb）Chrome 探测含 Windows 装位且不走 Xvfb。
+**Windows 桌面版**（Tauri + WebView2 壳）：`./build.sh desktop` → 根目录 `ccweb-desktop.exe`
+（~25MB，GUI 子系统无控制台黑窗，claude 子进程经 CREATE_NO_WINDOW 抑制控制台弹窗）。
+双击即开原生窗口：进程内起 axum（默认 `127.0.0.1:随机空闲端口`，不暴露局域网、
+不与浏览器版撞口；显式 `--port`/`CCWEB_PORT` 时按配置监听），窗口直接导航之——前端
+零改动，与浏览器版同构。**关窗 = 退出并结束全部会话子进程**。首次打开工作目录自动
+落到"最近有会话的目录"（WebView2 存储全新无记忆时的智能默认）。
+
 
 正式部署 `./build.sh deploy`（见下）。
 
 ## 部署
 
-按目标环境取用，三种形态同一份代码：
+按目标环境取用，四种形态同一份代码：
 
 - **裸跑**：`(cd backend && cargo run)`——开发态（dist 读磁盘）
-- **单文件**：根目录 `./ccweb`（./build.sh 产物，Rust 二进制 + 前端全量嵌入，~19MB；原 SEA 形态 137MB 的 1/7，常驻内存 ~8MB vs Node ~52MB；git 忽略）——拷到任何装了 claude 的机器，任意目录 `./ccweb` 即跑，无任何运行时依赖
+- **单文件**：根目录 `./ccweb`（./build.sh 产物，Rust 二进制 + 前端全量嵌入，~19MB；原 SEA 形态 137MB 的 1/7，常驻内存 ~8MB vs Node ~52MB；git 忽略）——拷到任何装了 claude 的机器，任意目录 `./ccweb` 即跑，无任何运行时依赖；**起来后默认自动开浏览器**（`--no-browser` 关）
+- **Windows 桌面版**：`./build.sh desktop` → `./ccweb-desktop.exe`（Tauri + WebView2 原生窗口，双击即用；见上"Windows 本地开发"）——Windows 的默认形态
 - **./build.sh deploy**：假如使用 systemd 的话（Linux 服务器常态），构建+安装一条命令——开发目录只是源码，服务装在系统位置、与源码解耦，升级 = 重跑 `./build.sh deploy`：
   1. 全量构建出 Rust 单文件（Linux 目标需 linux 构建产物——目标机构建或交叉编译）
   2. 安装 **`/usr/local/ccweb`**（自包含单文件本体）
@@ -85,6 +102,7 @@ sh.exe、daemon（contrib/dsweb）Chrome 探测含 Windows 装位且不走 Xvfb�
 ```bash
 ./ccweb -p 18090                # 指定端口（--port=18090 等价）
 ./ccweb --home /data/ws --single
+./ccweb --no-browser            # 不自动开浏览器（服务器/反代部署）
 ./ccweb --help                  # 完整用法；--version 查版本
 ```
 
@@ -108,6 +126,7 @@ systemd unit 传 env 比 args 方便，env 形态全量保留（与上表 CLI �
 | `CCWEB_HOME` | `$HOME` | 工作区根（树根/会话 cwd 钳制边界） |
 | `CCWEB_SINGLE` | – | `=1` 发布单会话形态：至多一个活会话，前端隐藏会话切换 |
 | `CCWEB_CLAUDE` | PATH 探测 | claude 可执行文件路径覆盖 |
+| `CCWEB_NO_BROWSER` | – | `=1` 同 `--no-browser`（不自动开浏览器） |
 | `CCWEB_NO_RUST` | – | `=1` 时 ./build.sh 跳过 Rust 单文件打包 |
 
 ## 访问认证（code-server 同款语义）
@@ -153,54 +172,13 @@ spawn 恒带 `--permission-prompt-tool stdio`（CLI ≥2.1，SDK canUseTool 同�
 - 渲染：子代理事件（`parent_tool_use_id` 非空）缩进弱化；思考 token 增量计数
   （"思考中… ~N tokens"）；MCP 工具名 `mcp__srv__tool` 美化为 `mcp:srv/tool`。
 
-## qtom 引擎：自带的免费 agent（DeepSeek 网页版）——已下线（2026-11-09）
-
-> **下线说明**：DeepSeek 网页版账号因风控被禁言（疑似工具协议拼接 + 每请求新会话的行为特征），
-> 通道停用。代码全部保留：`backend/qtom/`（crate 自洽，可 `cargo build --manifest-path qtom/Cargo.toml`
-> 独立编译）、`contrib/dsweb/`（daemon）、ccweb 后端接入（spawn/审批/resume）与前端兼容分支；
-> 已移出的部分：workspace 编译、build.sh 产物、UI 引擎入口。复活路径：账号可用后，把
-> `backend/Cargo.toml` 的 members 加回 `qtom`、恢复 build.sh 两行、去掉 App.tsx 引擎过滤即可。
-
-qtom 是内置的第二引擎——一只自研的 Rust 编码猫（qkeeper 动物园第一只居民），与 claude CLI
-同等地被 spawn（stdio 说同款 stream-json 协议），模型通道走 **DeepSeek 网页版（免费）**：
-本机跑一个 dsweb daemon 用 CDP 驱动真浏览器，工具调用经实测的文本协议桥
-（`<tool_call>{"name":..,"arguments":..}</tool_call>`）翻译成标准 OpenAI tool_calls。
-装 ccweb 白送一个免费 agent，零额外安装。
-
-### 部署（三步）
-
-```bash
-# 1. 起 daemon（唯一依赖 node + ws；macOS 直接弹有头 Chrome，Linux 需 xvfb）
-cd contrib/dsweb && npm install
-PORT=8300 DSWEB_TOKEN=某随机串 node daemon.js
-#    → 弹出的浏览器里登录一次 DeepSeek（登录态持久在 ~/.dsweb/profile，之后免登）
-#    服务器长跑可 DSWEB_HEADLESS=1 无头（复用已登录 profile；登录本身需有头一次）
-
-# 2. ccweb 挂上端点（daemon 与 ccweb 同机）
-./ccweb --dsweb http://127.0.0.1:8300 --dsweb-token 某随机串   # 或 CCWEB_DSWEB_URL/CCWEB_DSWEB_TOKEN
-
-# 3. UI 底部工具栏出现「引擎」切换（🐱 qtom / Claude），切到 qtom 后「新会话」即免费 agent
-```
-
-也可终端直用：`qtom --dsweb-url http://127.0.0.1:8300 --dsweb-token t -p "看看这个目录" --yes`。
-
-### 行为与边界
-
-- 工具六件套：read_file / write_file / edit / bash / glob / grep（bash 走授权卡片，
-  文件工具不问——v1 固定策略）；路径限制在会话目录内
-- 会话恢复/历史列表/审批卡/流式渲染与 claude 引擎完全同体验（transcript 写同款
-  JSONL 格式，历史面板可回放、可 resume）
-- 单模型 deepseek-web（无模型切换）；无图片输入；usage 为估算；上下文窗口按 64k 计
-- daemon 靠 DeepSeek 网页 DOM（`.ds-message` 选择器）工作——网页改版需更新 daemon.js；
-  每请求开新会话（全量拼接），打断无害
-- qtom 二进制随 build.sh 一起产出（./qtom），部署时装在 ccweb 同目录；`CCWEB_QTOM` 可显式指路
-
 ## 测试
 
 ```bash
 node frontend/test/e2e-test.mjs http://127.0.0.1:18090/     # 端到端冒烟：入口→会话→WS→claude 回复（需 claude 可用）
 node frontend/test/resume-test.mjs <base> <sid> <cwd>       # resume 幂等/续聊验证
-node frontend/test/dsweb-stub.mjs &                         # dsweb 桩（8312，无需 DeepSeek）
-node frontend/test/qtom-e2e.mjs http://127.0.0.1:18099/     # qtom 引擎全链路：创建→流式→工具→审批→resume（ccweb 需 --dsweb 指桩）
+node frontend/test/fix3-verify.mjs [base]                   # 三修复回归：init 免首消息/模式切换回包/ctx 分子真值
+cd frontend && node test/askform-check.mjs                  # AskUserQuestion 表单全链路（单选/多选/其他输入，真会话驱动）
+cd frontend && node test/replay-check.mjs                   # 刷新回放：表单落定卡选项齐全高亮还原
 cd frontend && node test/multi-select-test.mjs              # playwright UI 冒烟（多选/拖放/跟随等）
 ```

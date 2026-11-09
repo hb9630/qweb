@@ -161,7 +161,19 @@ export default function App() {
         if (typeof d.home === "string" && d.home) {
           setHome(d.home);
           try { localStorage.setItem("ccweb.home", d.home); } catch {} // 下次打开零等待兜底
-          if (!userRoot.current) setRoot(d.home); // 从未人工设定过才用 home 兜底
+          // 从未人工设定过：优先"最近有会话的目录"（全新环境/桌面 WebView 首开零记忆时
+          // 直接落回用户实际工作的地方，历史浮层/目录树才对得上）；无任何历史才用 home
+          if (!userRoot.current) {
+            setRoot(d.home);
+            fetch(`${API}/history`).then((r) => r.json())
+              .then((hs: any[]) => {
+                if (!Array.isArray(hs) || !hs.length || userRoot.current) return;
+                const best = hs.flatMap((g) => (g.sessions ?? []).map((s: any) => ({ cwd: g.cwd, at: s.startedAt ?? 0 })))
+                  .sort((a, b) => b.at - a.at)[0];
+                if (best?.cwd) setRoot(best.cwd);
+              })
+              .catch(() => {});
+          }
         }
         if (Array.isArray(d.models)) setEnvModels(d.models.map(String));
         if (Array.isArray(d.engines)) {

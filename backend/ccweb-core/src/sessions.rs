@@ -144,6 +144,11 @@ impl Session {
             }
         }
         let mut cmd = tokio::process::Command::new(&bin);
+        // Windows：GUI 子系统进程（桌面壳）spawn 控制台程序（claude.exe 等）时，
+        // 系统会给每个子进程新建控制台黑窗——CREATE_NO_WINDOW 抑制之（stdio 管道
+        // 照常，浏览器版 console 进程下无副作用）
+        #[cfg(windows)]
+        cmd.creation_flags(0x0800_0000);
         cmd.args(&args)
             .current_dir(&self.cwd)
             .envs({
