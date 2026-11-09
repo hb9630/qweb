@@ -12,7 +12,7 @@
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│ [📁 ~/Code/ccweb] [▾] [⇄ 换目录]     会话标题      （标题栏,全宽）│
+│ [📁 ~/Code/qweb] [▾] [⇄ 换目录]     会话标题      （标题栏,全宽）│
 ├───────────────┬──────────────────────┬───────────────────────┤
 │ ▓ 目录树(浮层)  │ ▓ 编辑器(浮层)        │                       │
 │ ▓ 从标题栏下方  │ ▓ 紧贴树右侧          │   对话(底层,铺满全宽)   │
@@ -35,7 +35,7 @@
 
 1. **cwd chip**：目录图标 + 路径（home 下显示 `~/…` 相对路径，外显绝对路径）。
    点击 = 开/关目录树浮层（树开关的唯一入口，不再有独立图标）。
-2. **紧邻下拉 ▾**：历史工作目录列表（`ccweb.recents`，≤5 条），点选直接切换。
+2. **紧邻下拉 ▾**：历史工作目录列表（`qweb.recents`，≤5 条），点选直接切换。
 3. **"换目录"按钮**：弹 DirPicker 选择器。
 
 ## 浮层各自独立关闭
@@ -54,7 +54,7 @@
 - 底部确认栏：当前候选路径 + **醒目 ✓ "选这个目录"**（明确的主操作，不用双击手势）。
 - Esc / 点击外部关闭。
 - 选定后联动（复用现有 `setWorkspace`，不改后端）：换目录 = 新会话（notice 提示保留）；
-  树重新扎根并自动展开（含此前关闭的情况）；写入 `ccweb.recents`。
+  树重新扎根并自动展开（含此前关闭的情况）；写入 `qweb.recents`。
 
 ## Explorer 删减（树锁死工作目录内）
 
@@ -66,7 +66,7 @@
 
 | 文件 | 改动 |
 |---|---|
-| App.tsx | 删 Activity Bar、手机分支；浮层布局（复用 Resizer 拖宽）；`ccweb.layout` 换新键 `{showTree, showEditor, wTree, wEditor}`（默认全关）；新增 `ccweb.recents`；`setWorkspace` 联动开树；notice 条提 z-index 防浮层遮盖 |
+| App.tsx | 删 Activity Bar、手机分支；浮层布局（复用 Resizer 拖宽）；`qweb.layout` 换新键 `{showTree, showEditor, wTree, wEditor}`（默认全关）；新增 `qweb.recents`；`setWorkspace` 联动开树；notice 条提 z-index 防浮层遮盖 |
 | ChatPanel.tsx | 头部改三件套；删右上关闭 X（对话不可关）；新增 `chatInset` prop 做内容列避让 |
 | Explorer.tsx | 按上文做减法 |
 | DirPicker.tsx | 新组件（面包屑 + 列表 + ✓ 确认栏 + recents） |

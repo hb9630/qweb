@@ -425,7 +425,7 @@ impl Session {
             (true, None) => json!({ "behavior": "allow" }), // 未知/重复回包：尽力而为，CLI 侧自会去重
             // 表单的"跳过"语义与普通权限拒绝不同（模型据此改问法），用 CLI 官方文案
             (false, _) if is_form => json!({ "behavior": "deny", "message": "User declined to answer questions." }),
-            (false, _) => json!({ "behavior": "deny", "message": "User denied via ccweb" }),
+            (false, _) => json!({ "behavior": "deny", "message": "User denied via qweb" }),
         };
         let msg = json!({
             "type": "control_response",

@@ -37,35 +37,35 @@ pub struct Config {
     pub single: bool,
     pub keeperd_url: String,
     pub projects: String,   // ~/.claude/projects
-    pub ctxwin_path: String, // ~/.claude/ccweb-ctxwin.json
+    pub ctxwin_path: String, // ~/.claude/qweb-ctxwin.json
     pub dsweb_url: String,    // qtom 引擎模型端点（空 = 引擎关闭）
     pub dsweb_token: String,
 }
 
 impl Config {
     pub fn from_env() -> Self {
-        let port = std::env::var("CCWEB_PORT")
+        let port = std::env::var("QWEB_PORT")
             .ok()
             .and_then(|p| p.parse::<u16>().ok())
             .unwrap_or(8090);
-        let auth = match std::env::var("CCWEB_AUTH").as_deref() {
+        let auth = match std::env::var("QWEB_AUTH").as_deref() {
             Ok("password") => AuthMode::Password,
             _ => AuthMode::NoPass,
         };
         let mut cfg = Self {
             port,
             auth,
-            auth_password: std::env::var("CCWEB_PASSWORD").ok().filter(|s| !s.is_empty()),
-            single: std::env::var("CCWEB_SINGLE").as_deref() == Ok("1"),
+            auth_password: std::env::var("QWEB_PASSWORD").ok().filter(|s| !s.is_empty()),
+            single: std::env::var("QWEB_SINGLE").as_deref() == Ok("1"),
             keeperd_url: std::env::var("KEEPERD_URL").ok().filter(|s| !s.is_empty())
                 .unwrap_or_else(|| "http://127.0.0.1:7998".into()),
             child_home: String::new(),
             projects: String::new(),
             ctxwin_path: String::new(),
-            dsweb_url: std::env::var("CCWEB_DSWEB_URL").ok().filter(|s| !s.is_empty()).unwrap_or_default(),
-            dsweb_token: std::env::var("CCWEB_DSWEB_TOKEN").ok().filter(|s| !s.is_empty()).unwrap_or_default(),
+            dsweb_url: std::env::var("QWEB_DSWEB_URL").ok().filter(|s| !s.is_empty()).unwrap_or_default(),
+            dsweb_token: std::env::var("QWEB_DSWEB_TOKEN").ok().filter(|s| !s.is_empty()).unwrap_or_default(),
         };
-        cfg.set_home(&std::env::var("CCWEB_HOME").ok().filter(|s| !s.is_empty())
+        cfg.set_home(&std::env::var("QWEB_HOME").ok().filter(|s| !s.is_empty())
             .unwrap_or_else(homedir));
         cfg
     }
@@ -74,13 +74,13 @@ impl Config {
     pub fn set_home(&mut self, home: &str) {
         self.child_home = super::util::P(home);
         self.projects = format!("{}/.claude/projects", self.child_home);
-        self.ctxwin_path = format!("{}/.claude/ccweb-ctxwin.json", self.child_home);
+        self.ctxwin_path = format!("{}/.claude/qweb-ctxwin.json", self.child_home);
     }
 
     /// claude 入口：env 显式 > win32 npm-global（新版原生 exe > 旧版 cli.js）> 惯例路径 > PATH。
     /// 返回 (bin, pre)：win 上 node 直跑 cli.js 时 pre=[cli]。
     pub fn claude_cmd(&self) -> (String, Vec<String>) {
-        if let Ok(v) = std::env::var("CCWEB_CLAUDE") {
+        if let Ok(v) = std::env::var("QWEB_CLAUDE") {
             if !v.is_empty() { return (v, vec![]); }
         }
         if IS_WIN {
@@ -119,7 +119,7 @@ impl Config {
     /// qtom 入口：env 显式 > 与本进程同目录（win 产物带 .exe）> PATH（与 claude_cmd 同策略）。
     /// qtom 自读 transcript：其 $HOME/.claude/projects 随 child_env 的 HOME 对齐 cfg.projects。
     pub fn qtom_cmd(&self) -> String {
-        if let Ok(v) = std::env::var("CCWEB_QTOM") {
+        if let Ok(v) = std::env::var("QWEB_QTOM") {
             if !v.is_empty() { return v; }
         }
         if let Ok(me) = std::env::current_exe() {

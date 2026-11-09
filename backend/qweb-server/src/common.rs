@@ -16,14 +16,14 @@ qweb —— Claude Code Web 壳
 用法: qweb [选项]
 
 选项:
-  -p, --port <PORT>     监听端口（默认 8090；env CCWEB_PORT）
-      --home <PATH>     工作区根 = 子进程 HOME（默认 $HOME；env CCWEB_HOME）
-      --single          单会话形态：至多一个活会话（env CCWEB_SINGLE=1）
-      --auth <MODE>     nopass | password（默认 nopass；env CCWEB_AUTH）
-      --password <PWD>  password 模式密码（env CCWEB_PASSWORD）
-      --dsweb <URL>     qtom 引擎模型端点（dsweb daemon；env CCWEB_DSWEB_URL）
-      --dsweb-token <T> 端点令牌（env CCWEB_DSWEB_TOKEN）
-      --no-browser      不自动打开浏览器（env CCWEB_NO_BROWSER=1；服务器/反代部署用）
+  -p, --port <PORT>     监听端口（默认 8090；env QWEB_PORT）
+      --home <PATH>     工作区根 = 子进程 HOME（默认 $HOME；env QWEB_HOME）
+      --single          单会话形态：至多一个活会话（env QWEB_SINGLE=1）
+      --auth <MODE>     nopass | password（默认 nopass；env QWEB_AUTH）
+      --password <PWD>  password 模式密码（env QWEB_PASSWORD）
+      --dsweb <URL>     qtom 引擎模型端点（dsweb daemon；env QWEB_DSWEB_URL）
+      --dsweb-token <T> 端点令牌（env QWEB_DSWEB_TOKEN）
+      --no-browser      不自动打开浏览器（env QWEB_NO_BROWSER=1；服务器/反代部署用）
   -h, --help            打印本帮助
   -V, --version         打印版本
 
@@ -44,18 +44,18 @@ fn parse_port(v: &str) -> u16 {
 }
 
 pub struct CliOut {
-    pub port_from: &'static str, // 启动横幅用：--port / CCWEB_PORT / 默认
+    pub port_from: &'static str, // 启动横幅用：--port / QWEB_PORT / 默认
     pub no_browser: bool,
 }
 
 /// CLI 参数解析（优先级 CLI > env > 默认；systemd unit 传 env 比 args 方便所以 env 兜底保留）
-pub fn apply_cli(cfg: &mut ccweb_core::config::Config) -> CliOut {
-    let mut port_from = if std::env::var("CCWEB_PORT").map(|v| v.parse::<u16>().is_ok()).unwrap_or(false) {
-        "CCWEB_PORT"
+pub fn apply_cli(cfg: &mut qweb_core::config::Config) -> CliOut {
+    let mut port_from = if std::env::var("QWEB_PORT").map(|v| v.parse::<u16>().is_ok()).unwrap_or(false) {
+        "QWEB_PORT"
     } else {
         "默认"
     };
-    let mut no_browser = std::env::var("CCWEB_NO_BROWSER").as_deref() == Ok("1");
+    let mut no_browser = std::env::var("QWEB_NO_BROWSER").as_deref() == Ok("1");
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         if a == "-p" {
@@ -72,8 +72,8 @@ pub fn apply_cli(cfg: &mut ccweb_core::config::Config) -> CliOut {
             cfg.single = true;
         } else if let Some(v) = val("--auth", &a, &mut args) {
             cfg.auth = match v.as_str() {
-                "password" => ccweb_core::config::AuthMode::Password,
-                "nopass" => ccweb_core::config::AuthMode::NoPass,
+                "password" => qweb_core::config::AuthMode::Password,
+                "nopass" => qweb_core::config::AuthMode::NoPass,
                 other => { eprintln!("× --auth 只支持 nopass | password，收到：{other}"); std::process::exit(2); }
             };
         } else if let Some(v) = val("--password", &a, &mut args) {
@@ -96,22 +96,22 @@ pub fn apply_cli(cfg: &mut ccweb_core::config::Config) -> CliOut {
             std::process::exit(2);
         }
     }
-    if cfg.auth == ccweb_core::config::AuthMode::Password && cfg.auth_password.as_deref().unwrap_or("").is_empty() {
-        eprintln!("× --auth=password 需要密码：--password=xxx 或 CCWEB_PASSWORD");
+    if cfg.auth == qweb_core::config::AuthMode::Password && cfg.auth_password.as_deref().unwrap_or("").is_empty() {
+        eprintln!("× --auth=password 需要密码：--password=xxx 或 QWEB_PASSWORD");
         std::process::exit(2);
     }
     CliOut { port_from, no_browser }
 }
 
 /// App 组装（两 bin 同款）
-pub fn build_app(cfg: &ccweb_core::config::Config) -> Arc<ccweb_core::App> {
-    Arc::new(ccweb_core::App {
-        auth: ccweb_core::auth::AuthState::new(cfg.auth.clone(), cfg.auth_password.clone()),
+pub fn build_app(cfg: &qweb_core::config::Config) -> Arc<qweb_core::App> {
+    Arc::new(qweb_core::App {
+        auth: qweb_core::auth::AuthState::new(cfg.auth.clone(), cfg.auth_password.clone()),
         cfg: cfg.clone(),
-        fs_hub: ccweb_core::fswatch::FsHub::new(),
+        fs_hub: qweb_core::fswatch::FsHub::new(),
         sessions: Default::default(),
-        ctxwin: std::sync::Arc::new(ccweb_core::ctxwin::CtxWin::new(cfg.ctxwin_path.clone())),
-        http: ccweb_core::Http {
+        ctxwin: std::sync::Arc::new(qweb_core::ctxwin::CtxWin::new(cfg.ctxwin_path.clone())),
+        http: qweb_core::Http {
             probe: reqwest_probe_client(),
             proxy: reqwest::Client::new(),
         },
@@ -119,11 +119,11 @@ pub fn build_app(cfg: &ccweb_core::config::Config) -> Arc<ccweb_core::App> {
 }
 
 /// 启动横幅（始终打印生效参数，端口带来源标注）
-pub fn banner(cfg: &ccweb_core::config::Config, port_from: &str, bind: &str) {
+pub fn banner(cfg: &qweb_core::config::Config, port_from: &str, bind: &str) {
     let (bin, _) = cfg.claude_cmd();
     let auth = match cfg.auth {
-        ccweb_core::config::AuthMode::NoPass => "nopass",
-        ccweb_core::config::AuthMode::Password => "password",
+        qweb_core::config::AuthMode::NoPass => "nopass",
+        qweb_core::config::AuthMode::Password => "password",
     };
     println!("[qweb] v{}  http://{bind}", env!("CARGO_PKG_VERSION"));
     println!("       port: {} ({})   home: {}", cfg.port, port_from, cfg.child_home);

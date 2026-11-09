@@ -1,14 +1,14 @@
 // qtom 引擎端到端：POST engine:qtom → WS 帧序列断言（init→流式→工具→审批→tool_result→二轮→result）
 // → 会话列表 engine → resume（transcript 推导引擎 + pre 回放）。前置：dsweb-stub.mjs 在 8312，
-// ccweb 以 --dsweb http://127.0.0.1:8312 启动。用法：node frontend/test/qtom-e2e.mjs http://127.0.0.1:18099
+// qweb 以 --dsweb http://127.0.0.1:8312 启动。用法：node frontend/test/qtom-e2e.mjs http://127.0.0.1:18099
 const base = process.argv[2]?.replace(/\/+$/, "");
-if (!base) { console.error("用法: node qtom-e2e.mjs <ccweb-base-url>"); process.exit(2); }
+if (!base) { console.error("用法: node qtom-e2e.mjs <qweb-base-url>"); process.exit(2); }
 const fail = (m) => { console.error("✗ " + m); process.exit(1); };
 const wsUrl = (id) => base.replace(/^http/, "ws") + `/ws/${id}`;
 
 // ---- 1. /api/env 引擎清单 ----
 const env = await fetch(`${base}/api/env`).then(r => r.json());
-const q = env.engines?.find(e => e.id === "qtom") ?? fail("engines 无 qtom（ccweb 未配 --dsweb？）");
+const q = env.engines?.find(e => e.id === "qtom") ?? fail("engines 无 qtom（qweb 未配 --dsweb？）");
 console.log(`✓ 引擎清单: ${env.engines.map(e => e.id).join(", ")}（${q.label}）`);
 
 // ---- 2. 创建 qtom 会话 ----

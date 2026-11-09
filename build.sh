@@ -6,8 +6,8 @@
 #                                默认本机随机端口开原生窗口；需 MSVC 环境——vcvars64 后跑）
 # ./build.sh deploy | install   构建 + 部署：装 /usr/local/qweb + systemd 重启 + 健康检查
 # ./build.sh clean              清产物：./qweb + frontend/dist + cargo target（下次全量重建）
-# CCWEB_NO_RUST=1 ./build.sh    只出前端（deploy 恒全量，装机器需要单文件）
-# CCWEB_PORT=xxx ./build.sh deploy   部署端口（默认 18090）
+# QWEB_NO_RUST=1 ./build.sh    只出前端（deploy 恒全量，装机器需要单文件）
+# QWEB_PORT=xxx ./build.sh deploy   部署端口（默认 18090）
 set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 mode=${1:-build}
@@ -27,14 +27,14 @@ fi
 echo "==> 1/2 前端构建（frontend/，vite）"
 (cd "$root/frontend" && npm run build)
 
-if [ "$mode" = "build" ] && [ "${CCWEB_NO_RUST:-}" = "1" ]; then
-  echo "==> 2/2 跳过 Rust 构建（CCWEB_NO_RUST=1）"
+if [ "$mode" = "build" ] && [ "${QWEB_NO_RUST:-}" = "1" ]; then
+  echo "==> 2/2 跳过 Rust 构建（QWEB_NO_RUST=1）"
   exit 0
 fi
 
 if [ "$mode" = "desktop" ]; then
   echo "==> 2/2 Rust 构建（desktop feature：Tauri 壳 qweb-desktop.exe，前端全量嵌入）"
-  (cd "$root/backend" && cargo build --release -p ccweb-server --features desktop --bin qweb-desktop)
+  (cd "$root/backend" && cargo build --release -p qweb-server --features desktop --bin qweb-desktop)
   cp "$root/backend/target/release/qweb-desktop.exe" "$root/qweb-desktop.exe"
   chmod 755 "$root/qweb-desktop.exe"
   mb=$(awk -v b="$(wc -c < "$root/qweb-desktop.exe" | tr -d ' ')" 'BEGIN{printf "%.1f", b/1024/1024}')
@@ -43,7 +43,7 @@ if [ "$mode" = "desktop" ]; then
 fi
 
 echo "==> 2/2 Rust 构建（backend/target/release/qweb → ./qweb；前端全量嵌入，单文件发布。qtom 已移出编译——代码保留在 backend/qtom/，见 backend/Cargo.toml 注释）"
-(cd "$root/backend" && cargo build --release -p ccweb-server)
+(cd "$root/backend" && cargo build --release -p qweb-server)
 exe=""
 [ "$(uname -s)" = "Linux" ] || [ "$(uname -s)" = "Darwin" ] || exe=".exe"
 cp "$root/backend/target/release/qweb${exe}" "$root/qweb${exe}"
@@ -53,7 +53,7 @@ echo "完成：./qweb${exe}（${mb}MB）"
 [ "$mode" = "build" ] && exit 0
 
 # ---------- 部署（= make install；Linux + systemd；rm -rf 连旧版目录形态一并清掉；sudo 只碰落位/系统位） ----------
-PORT=${CCWEB_PORT:-18090}
+PORT=${QWEB_PORT:-18090}
 DEST=/usr/local/qweb
 echo "==> 部署（${DEST}，port=${PORT}）"
 sudo rm -rf "$DEST"
@@ -73,7 +73,7 @@ Wants=network-online.target
 [Service]
 User=$user
 Environment=HOME=$home
-Environment=CCWEB_PORT=$PORT
+Environment=QWEB_PORT=$PORT
 WorkingDirectory=%h
 ExecStart=$DEST/qweb
 Restart=always

@@ -1,4 +1,4 @@
-// CC stream-json 同构事件发射层：一行一 JSON 到 stdout（ccweb 按 \n 切行消费），
+// CC stream-json 同构事件发射层：一行一 JSON 到 stdout（qweb 按 \n 切行消费），
 // 定稿事件同步落 transcript（CC JSONL 形状，history.rs 可读）。
 // -p 模式下 stdout 静默（quiet），事件仅进 transcript，由 main 打印人类可读摘要。
 use crate::transcript::Transcript;
@@ -147,7 +147,7 @@ impl Emitter {
         );
     }
 
-    /// bash 审批询问；前端审批卡 → ccweb control_response → stdin
+    /// bash 审批询问；前端审批卡 → qweb control_response → stdin
     pub fn ask_perm(&mut self, request_id: &str, tool_use_id: &str, tool_name: &str, input: &Value) {
         self.out(
             json!({ "type": "control_request", "request_id": request_id,

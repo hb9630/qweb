@@ -3,7 +3,7 @@
   "productName": "qweb",
   "version": "0.1.0",
   "identifier": "qweb.desktop",
-  "build": { "frontendDist": "../ccweb-server/ui-empty" },
+  "build": { "frontendDist": "../qweb-server/ui-empty" },
   "app": {
     "windows": [],
     "security": { "csp": null }

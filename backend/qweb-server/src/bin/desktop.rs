@@ -2,7 +2,7 @@
 // 其他平台/浏览器形态用 qweb（qweb-desktop.rs 的 compile_error 双保险）。
 //
 // 架构：Tauri 只做窗口壳——进程内起 axum（默认 127.0.0.1:随机空闲端口，显式
-// --port/CCWEB_PORT 时用配置端口并照常 0.0.0.0 监听），窗口直接导航该 URL。
+// --port/QWEB_PORT 时用配置端口并照常 0.0.0.0 监听），窗口直接导航该 URL。
 // 前端零改动（同源 fetch/WS 全通），浏览器版与桌面版共享同一服务实现。
 // 关窗 = 退出：tauri run 返回后统一 shutdown（杀全部 claude 子进程）再 exit。
 // GUI 子系统：不出现控制台黑窗口（完整桌面应用形态；println 横幅随之不可见，日志走 err 重定向）
@@ -18,7 +18,7 @@ mod common;
 use std::sync::Arc;
 
 fn main() {
-    let mut cfg = ccweb_core::config::Config::from_env();
+    let mut cfg = qweb_core::config::Config::from_env();
     let cli = common::apply_cli(&mut cfg);
     // 桌面版默认本机随机空闲口（免端口冲突/免暴露局域网）；显式配置端口 = 用户想固定访问
     let explicit_port = cli.port_from != "默认";
@@ -33,15 +33,15 @@ fn main() {
     // ——都必须在 runtime 上下文里调（block_on 内），否则 "no reactor running" panic
     let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
     let (app, port, bind) = rt.block_on(async {
-        let app: Arc<ccweb_core::App> = common::build_app(&cfg);
-        ccweb_core::spawn_background(app.clone());
+        let app: Arc<qweb_core::App> = common::build_app(&cfg);
+        qweb_core::spawn_background(app.clone());
         let listener = tokio::net::TcpListener::bind(&addr)
             .await
             .unwrap_or_else(|e| panic!("监听 {addr} 失败: {e}"));
         let local = listener.local_addr().expect("local addr");
         let srv_app = app.clone();
         tokio::spawn(async move {
-            axum::serve(listener, ccweb_core::router(srv_app))
+            axum::serve(listener, qweb_core::router(srv_app))
                 .await
                 .expect("server error");
         });
@@ -70,7 +70,7 @@ fn main() {
 
     // 所有窗口已关：清理 claude 子进程后退出（kill_on_drop 之外的双保险）
     rt.block_on(async {
-        ccweb_core::shutdown(&app).await;
+        qweb_core::shutdown(&app).await;
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
     });
     std::process::exit(0);

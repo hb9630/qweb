@@ -22,7 +22,7 @@ jobs:
         run: npm ci && npm run build
         working-directory: frontend
       - name: Rust 构建（desktop feature：桌面版 + 浏览器版一次出）
-        run: cargo build --release -p ccweb-server --features desktop
+        run: cargo build --release -p qweb-server --features desktop
         working-directory: backend
       - name: 收集产物
         shell: bash
@@ -51,7 +51,7 @@ jobs:
         run: npm ci && npm run build
         working-directory: frontend
       - name: Rust 构建（浏览器版单文件）
-        run: cargo build --release -p ccweb-server
+        run: cargo build --release -p qweb-server
         working-directory: backend
       - name: 收集产物
         run: cp backend/target/release/qweb "qweb-linux-${{ github.ref_name }}"

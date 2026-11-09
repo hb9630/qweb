@@ -17,7 +17,7 @@ const paths = [];
 for (const r of rows.slice(0, 6)) paths.push(await r.getAttribute("data-path"));
 console.log("前几行:", paths.slice(0, 4));
 
-const selPaths = async () => JSON.parse(await page.evaluate(() => localStorage.getItem("ccweb.sel")) || "{}").paths || [];
+const selPaths = async () => JSON.parse(await page.evaluate(() => localStorage.getItem("qweb.sel")) || "{}").paths || [];
 
 await rows[1].click();
 await page.waitForTimeout(200);
@@ -48,7 +48,7 @@ for (let i = 3; i <= 5; i++) all.push((await rows[i].getAttribute("class")).incl
 console.log("三项统一杏橙:", all.every(Boolean) ? "PASS" : "FAIL", all.join(","));
 
 // 拖拽不坍缩:多选后 mouseDown 到选中项上(不 mouseUp)→ sel 仍 2 项
-await page.evaluate(() => localStorage.setItem("ccweb.sel", JSON.stringify({})));
+await page.evaluate(() => localStorage.setItem("qweb.sel", JSON.stringify({})));
 await rows[7].click();
 await page.keyboard.down("Control"); await rows[9].click(); await page.keyboard.up("Control");
 const before = await selPaths();

@@ -1,9 +1,9 @@
 // Windows 盘符导航验证：换目录选择器支持盘符列表（「电脑」页）/ 跨盘切换，
 // 标题栏与面包屑不再用 ~ 折叠（win 直接绝对路径）。POSIX 行为不受影响（~ 逻辑保留）。
-// 前置：ccweb 服务在跑（win 机器，有多盘）。用法：node dirpicker-win-check.mjs http://127.0.0.1:18090
+// 前置：qweb 服务在跑（win 机器，有多盘）。用法：node dirpicker-win-check.mjs http://127.0.0.1:18090
 import { chromium } from "playwright";
 const base = process.argv[2]?.replace(/\/+$/, "");
-if (!base) { console.error("用法: node dirpicker-win-check.mjs <ccweb-base-url>"); process.exit(2); }
+if (!base) { console.error("用法: node dirpicker-win-check.mjs <qweb-base-url>"); process.exit(2); }
 const fail = (m) => { console.error("✗ " + m); process.exit(1); };
 
 let b;

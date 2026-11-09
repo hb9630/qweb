@@ -2,14 +2,14 @@
 
 Claude Code 的流式 Web 工作台：对话（stream-json 双向管道）为全宽主角，目录树/编辑器是从标题栏左上（工作目录三件套）派生的一体化浮层（右键全功能文件管理、多 tab 编辑）。Rust 后端（axum/tokio 单二进制，前端全量嵌入）+ React 前端；npm 机制只用于 frontend/，根目录纯 shell 脚本（build.sh / deploy.sh）编排构建与部署。
 
-> 2026-11-06 从 `keeper/deploy/ccweb` 拆出独立仓库；2026-11-07 后端移植 Rust（Node 版已移除，API/WS 契约经双后端逐字节 diff 验证后切换）。
+> 2026-11-06 从 `keeper/deploy/qweb` 拆出独立仓库；2026-11-07 后端移植 Rust（Node 版已移除，API/WS 契约经双后端逐字节 diff 验证后切换）。
 
 ## 目录结构
 
 ```
 backend/            Rust 后端（cargo workspace 自持：Cargo.toml/lock、.cargo 镜像、target/ 都在这层）
-  ccweb-core/       业务核心 lib：会话管道/fs API/历史回放/静态嵌入
-  ccweb-server/     薄 bin：CLI 解析/bind/信号/启动横幅；common.rs 两 bin 共用；
+  qweb-core/       业务核心 lib：会话管道/fs API/历史回放/静态嵌入
+  qweb-server/     薄 bin：CLI 解析/bind/信号/启动横幅；common.rs 两 bin 共用；
                     bin/desktop.rs = Windows Tauri 桌面壳（--features desktop，仅 win 编译）
 frontend/           前端（React + TypeScript + Vite）——js/mjs 全部收在这层：依赖自持，测试也在这
   src/ChatPanel     对话区（chat-first 布局底层主角，头部即全局标题栏：cwd chip 开关目录树 / ▾ 历史工作目录 / 换目录）
@@ -29,9 +29,9 @@ npm 机制只存在于 frontend/ 内部（install/dev/build 走 vite）；cargo 
 (cd frontend && npm install)          # 前端依赖（Rust 侧经 backend/.cargo/config.toml 走 rsproxy 镜像）
 ./build.sh                            # 全量构建：frontend/dist + 根目录 ./qweb（~19MB 单文件）
 ./build.sh clean                      # 清产物：./qweb、frontend/dist、cargo target
-CCWEB_NO_RUST=1 ./build.sh            # 只出前端（开发够用）
+QWEB_NO_RUST=1 ./build.sh            # 只出前端（开发够用）
 
-(cd backend && cargo run -p ccweb-server)   # Rust 后端开发跑（debug 态 dist 从磁盘读，前端重建无需重编）
+(cd backend && cargo run -p qweb-server)   # Rust 后端开发跑（debug 态 dist 从磁盘读，前端重建无需重编）
 (cd frontend && npm run dev)                # 前端开发（vite HMR）
 ```
 
@@ -59,7 +59,7 @@ call "C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\VC\Auxiliar
 set K=C:\Program Files (x86)\Windows Kits\10
 set INCLUDE=%INCLUDE%;%K%\Include\10.0.19041.0\ucrt;%K%\Include\10.0.19041.0\um;%K%\Include\10.0.19041.0\shared;%K%\Include\10.0.19041.0\winrt;%K%\Include\10.0.19041.0\cppwinrt
 set LIB=%LIB%;%K%\Lib\10.0.19041.0\ucrt\x64;%K%\Lib\10.0.19041.0\um\x64
-cd /d <repo>\backend && cargo build --release -p ccweb-server %*
+cd /d <repo>\backend && cargo build --release -p qweb-server %*
 ```
 
 注意：重构建前先停在跑的 qweb/qweb-desktop 进程——Windows 锁住运行中的 exe，
@@ -68,7 +68,7 @@ cargo 换产物时报 `failed to remove file ... (os error 5)`。
 **Windows 桌面版**（Tauri + WebView2 壳）：`./build.sh desktop` → 根目录 `qweb-desktop.exe`
 （~25MB，GUI 子系统无控制台黑窗，claude 子进程经 CREATE_NO_WINDOW 抑制控制台弹窗）。
 双击即开原生窗口：进程内起 axum（默认 `127.0.0.1:随机空闲端口`，不暴露局域网、
-不与浏览器版撞口；显式 `--port`/`CCWEB_PORT` 时按配置监听），窗口直接导航之——前端
+不与浏览器版撞口；显式 `--port`/`QWEB_PORT` 时按配置监听），窗口直接导航之——前端
 零改动，与浏览器版同构。**关窗 = 退出并结束全部会话子进程**。首次打开工作目录自动
 落到"最近有会话的目录"（WebView2 存储全新无记忆时的智能默认）。
 
@@ -85,7 +85,7 @@ cargo 换产物时报 `failed to remove file ... (os error 5)`。
 - **./build.sh deploy**：假如使用 systemd 的话（Linux 服务器常态），构建+安装一条命令——开发目录只是源码，服务装在系统位置、与源码解耦，升级 = 重跑 `./build.sh deploy`：
   1. 全量构建出 Rust 单文件（Linux 目标需 linux 构建产物——目标机构建或交叉编译）
   2. 安装 **`/usr/local/qweb`**（自包含单文件本体）
-  3. 生成 systemd 单元（自适应 User/HOME/端口，默认 **18090**；`CCWEB_PORT=xxx ./build.sh deploy` 改端口）→ 安装重启 → 健康检查
+  3. 生成 systemd 单元（自适应 User/HOME/端口，默认 **18090**；`QWEB_PORT=xxx ./build.sh deploy` 改端口）→ 安装重启 → 健康检查
 
 ## 与 Node 版的刻意差异（Rust 版）
 
@@ -122,23 +122,23 @@ systemd unit 传 env 比 args 方便，env 形态全量保留（与上表 CLI �
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
-| `CCWEB_PORT` | 8090 | 监听端口 |
-| `CCWEB_HOME` | `$HOME` | 工作区根（树根/会话 cwd 钳制边界） |
-| `CCWEB_SINGLE` | – | `=1` 发布单会话形态：至多一个活会话，前端隐藏会话切换 |
-| `CCWEB_CLAUDE` | PATH 探测 | claude 可执行文件路径覆盖 |
-| `CCWEB_NO_BROWSER` | – | `=1` 同 `--no-browser`（不自动开浏览器） |
-| `CCWEB_NO_RUST` | – | `=1` 时 ./build.sh 跳过 Rust 单文件打包 |
+| `QWEB_PORT` | 8090 | 监听端口 |
+| `QWEB_HOME` | `$HOME` | 工作区根（树根/会话 cwd 钳制边界） |
+| `QWEB_SINGLE` | – | `=1` 发布单会话形态：至多一个活会话，前端隐藏会话切换 |
+| `QWEB_CLAUDE` | PATH 探测 | claude 可执行文件路径覆盖 |
+| `QWEB_NO_BROWSER` | – | `=1` 同 `--no-browser`（不自动开浏览器） |
+| `QWEB_NO_RUST` | – | `=1` 时 ./build.sh 跳过 Rust 单文件打包 |
 
 ## 访问认证（code-server 同款语义）
 
 ```bash
 ./qweb --auth=nopass                      # 默认：无认证
 ./qweb --auth=password --password=xxx     # 密码模式
-CCWEB_AUTH=password CCWEB_PASSWORD=xxx ./qweb   # env 形态（systemd unit 传 env 更方便）
+QWEB_AUTH=password QWEB_PASSWORD=xxx ./qweb   # env 形态（systemd unit 传 env 更方便）
 ```
 
 - 密码模式：全部 HTTP/WS 需会话 cookie；未登录页面 303 → `/login`（内建深色登录页），API 401，WS 拒绝
-- 登录成功签发 30 天 `ccweb_auth` cookie（HttpOnly/SameSite=Lax）；`/logout` 登出销毁
+- 登录成功签发 30 天 `qweb_auth` cookie（HttpOnly/SameSite=Lax）；`/logout` 登出销毁
 - 会话 token 内存态：**服务重启后需重新登录**；密码为常数时间比较
 - base_path 兼容：`/login` 已入路由锚点表，反代前缀下照常工作
 

@@ -1,8 +1,8 @@
-// keeperd 客户端:经 ccweb server 的 /api/keeper/* 反代(同源,无需 CORS)。
+// keeperd 客户端:经 qweb server 的 /api/keeper/* 反代(同源,无需 CORS)。
 // token 存 localStorage;401 由调用方引导重新登录。
 import { API } from "./api";
 
-const TK = "ccweb.keeperd_token";
+const TK = "qweb.keeperd_token";
 export const kdToken = () => { try { return localStorage.getItem(TK) || ""; } catch { return ""; } };
 export const kdSetToken = (t: string) => { try { t ? localStorage.setItem(TK, t) : localStorage.removeItem(TK); } catch {} };
 

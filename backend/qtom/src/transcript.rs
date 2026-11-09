@@ -1,6 +1,6 @@
 // transcript：CC JSONL 形状读写。写侧由 Emitter 追加定稿事件（已 wrap 过）；
 // 读侧 = resume 再水化（transcript 事件 → OpenAI messages + tool id 续号）。
-// 行形状按 ccweb history.rs 的解析要求：每行带 cwd；assistant 行带
+// 行形状按 qweb history.rs 的解析要求：每行带 cwd；assistant 行带
 // /message/model + /message/usage{input_tokens,cache_read_input_tokens,
 // cache_creation_input_tokens} + content 数组；user 行带 tool_result 或文本。
 use serde_json::{json, Value};
@@ -40,7 +40,7 @@ pub fn encode_dir(cwd: &str) -> String {
     cwd.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect()
 }
 
-/// 全 projects 子目录扫描定位 {sid}.jsonl（与 ccweb history::transcript_path 同策略）
+/// 全 projects 子目录扫描定位 {sid}.jsonl（与 qweb history::transcript_path 同策略）
 pub fn find(projects: &str, sid: &str) -> Option<PathBuf> {
     let name = format!("{sid}.jsonl");
     let root = std::path::Path::new(projects);
@@ -70,7 +70,7 @@ pub fn rehydrate(path: &PathBuf) -> (Vec<Value>, u64) {
                         messages.push(json!({ "role": "user", "content": s }));
                     }
                     Value::Array(items) => {
-                        // 拆两类：tool_result → role:tool；text → user 文本（ccweb 写入形态为块数组）
+                        // 拆两类：tool_result → role:tool；text → user 文本（qweb 写入形态为块数组）
                         let mut texts = vec![];
                         for it in items {
                             if it.get("type").and_then(|v| v.as_str()) == Some("tool_result") {
@@ -147,7 +147,7 @@ mod tests {
 
     #[test]
     fn dir_encode() {
-        assert_eq!(encode_dir("/Users/huangbin/Code/ccweb"), "-Users-huangbin-Code-ccweb");
+        assert_eq!(encode_dir("/Users/huangbin/Code/qweb"), "-Users-huangbin-Code-qweb");
     }
 
     #[test]

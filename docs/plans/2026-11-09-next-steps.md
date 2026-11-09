@@ -1,6 +1,6 @@
 # qtom 引擎：下一步工作清单（2026-11-09 · amdr9 接力）
 
-> 前情：2026-11-08 在 Mac 上完成 qtom 引擎全链路开发（qtom Rust 猫 + ccweb 接入 +
+> 前情：2026-11-08 在 Mac 上完成 qtom 引擎全链路开发（qtom Rust 猫 + qweb 接入 +
 > 前端选择器 + dsweb daemon adapter 插件化）。stub 链路 e2e 15/15 全绿；真链路已通
 > （无头模式 + 工具桥返回标准 tool_calls，详见文末"关键结论"）。工作转移到 amdr9 继续。
 
@@ -8,16 +8,16 @@
 
 ### 1. 环境就绪
 ```bash
-cd ~/Code/ccweb
-rm -f ccweb qtom                                  # 删掉 Mac 编译的旧二进制（Linux 用不了）
+cd ~/Code/qweb
+rm -f qweb qtom                                  # 删掉 Mac 编译的旧二进制（Linux 用不了）
 (cd frontend && npm install)                      # 前端依赖
-(cd backend && cargo build -p qtom -p ccweb-server)   # Rust 依赖编译（走 rsproxy 镜像）
-rm -f ~/Code/ccweb/ccweb ~/Code/ccweb/qtom        # 若 build 产物异常再清
+(cd backend && cargo build -p qtom -p qweb-server)   # Rust 依赖编译（走 rsproxy 镜像）
+rm -f ~/Code/qweb/qweb ~/Code/qweb/qtom        # 若 build 产物异常再清
 ```
 
 ### 2. dsweb daemon 起 + 登录（amdr9 上首次）
 ```bash
-cd ~/Code/ccweb/contrib/dsweb && npm install
+cd ~/Code/qweb/contrib/dsweb && npm install
 PORT=8300 DSWEB_TOKEN=t node daemon.js            # 默认有头：Linux 无 X 需要 xvfb（apt install xvfb）
 # 有头窗口里登录 DeepSeek 一次（登录态落 ~/.dsweb/profile，之后免登）
 # 登录完成后改无头长跑：
@@ -39,17 +39,17 @@ curl -s -N http://127.0.0.1:8300/v1/chat/completions -H 'Content-Type: applicati
 ### 4. qtom 全链路真跑（多工具任务）
 ```bash
 mkdir -p /tmp/qtom-real && echo "# 测试" > /tmp/qtom-real/note.md
-cd /tmp/qtom-real && ~/Code/ccweb/backend/target/debug/qtom \
+cd /tmp/qtom-real && ~/Code/qweb/backend/target/debug/qtom \
   --dsweb-url http://127.0.0.1:8300 --dsweb-token t \
   --cwd /tmp/qtom-real --projects /tmp/qtom-real/.projects \
   -p "看看这个目录里有什么文件，读出 .md 文件的内容" --yes
 ```
 期望：流式输出 → glob/bash 工具调用 → read_file → 收尾总结。
 
-### 5. ccweb 集成 e2e（stub + 真链路各一遍）
+### 5. qweb 集成 e2e（stub + 真链路各一遍）
 ```bash
 node frontend/test/dsweb-stub.mjs &               # 桩（8312）
-CCWEB_QTOM=$PWD/backend/target/debug/qtom backend/target/debug/ccweb \
+QWEB_QTOM=$PWD/backend/target/debug/qtom backend/target/debug/qweb \
   --port 18099 --home /tmp/qtom-home --dsweb http://127.0.0.1:8312 --dsweb-token t &
 node frontend/test/qtom-e2e.mjs http://127.0.0.1:18099    # 15 断言全绿
 # 真链路：--dsweb 指向 8300（真 daemon），UI 开 qtom 会话跑一个真实多工具任务
@@ -57,17 +57,17 @@ node frontend/test/qtom-e2e.mjs http://127.0.0.1:18099    # 15 断言全绿
 
 ### 6. 发布构建
 ```bash
-./build.sh          # 产出 ./ccweb + ./qtom 双二进制
+./build.sh          # 产出 ./qweb + ./qtom 双二进制
 ```
 
 ## 二、遗留改进项（非阻塞，按价值排序）
 
 1. **流式降级开关**：qtom 客户端若 daemon 流式异常，自动改发 `stream:false`
    （daemon 非流式分支 11-08 已验证稳定）——dsclient.rs 的 chat() 加个重试参数即可。
-2. **16090/amdr9 部署形态**：restart.sh 目前只管 ccweb；qtom 部署在 ccweb 同目录
+2. **16090/amdr9 部署形态**：restart.sh 目前只管 qweb；qtom 部署在 qweb 同目录
    （build.sh deploy 已处理），daemon 用 systemd user unit（模板抄 gb10 的
    ~/.config/systemd/user/dsweb.service，加 `Environment=DSWEB_HEADLESS=1`）。
-3. **审批策略扩展**：v1 固定 bash 必问/文件工具不问；后续可映射 ccweb 前端的
+3. **审批策略扩展**：v1 固定 bash 必问/文件工具不问；后续可映射 qweb 前端的
    权限模式（dontAsk→跳过 bash 审批，plan→全问）——qtom 侧已收 Ctrl 帧，只差语义。
 4. **usage 真值**：现在按字符/3 估算；daemon 侧其实能从网页抓到 token 数（回复区
    角落有显示），可让 daemon 回传 `usage` 字段，qtom 透传。
@@ -90,5 +90,5 @@ node frontend/test/qtom-e2e.mjs http://127.0.0.1:18099    # 15 断言全绿
 - `adapters/deepseek.js` = 页面适配：isReady/fill/send/readMain/uiTail 全部 DOM 细节，
   mtime 热加载（浏览器/登录态/队列不动）
 
-**协议链**：ccweb UI ←WS→ ccweb(spawn qtom，CC stream-json 同构) ←stdio→ qtom 猫
+**协议链**：qweb UI ←WS→ qweb(spawn qtom，CC stream-json 同构) ←stdio→ qtom 猫
 （六工具+审批+transcript） ←SSE→ dsweb daemon（文本工具协议桥） ←CDP→ DeepSeek 网页

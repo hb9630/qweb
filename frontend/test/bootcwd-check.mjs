@@ -1,6 +1,6 @@
 // 初始 cwd 显示验证：打开页面即显示 home 路径，无"（未设定）"窗口。
 // 场景 A：清空全部本地状态（首访）——env 拦截延迟 2s，期间应显示"…"而非"（未设定）"
-// 场景 B：保留 ccweb.home 缓存（二次访问）——env 同样延迟，期间应直接显示 home 绝对路径
+// 场景 B：保留 qweb.home 缓存（二次访问）——env 同样延迟，期间应直接显示 home 绝对路径
 import { chromium } from "playwright";
 const base = "http://127.0.0.1:18090/";
 let b; try { b = await chromium.launch(); } catch { b = await chromium.launch({ channel: "chrome" }); }
@@ -21,7 +21,7 @@ chip = await pg.locator('button[title^="工作目录："]').first().innerText();
 /^(C:\/Users|~)/.test(chip) || (() => { throw new Error("✗ env 到达后应显示 home 路径：" + chip); })();
 console.log(`✓ env 到达后显示 home（${chip.trim()}）`);
 
-// B：二次访问（ccweb.home 已缓存）
+// B：二次访问（qweb.home 已缓存）
 await pg.goto("about:blank");
 await pg.goto(base);
 await pg.waitForTimeout(500);

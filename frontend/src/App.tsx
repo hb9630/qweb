@@ -1,4 +1,4 @@
-// ccweb 主界面：对话主导（chat-first）——对话铺满全宽做底层，其头部升格为全局标题栏；
+// qweb 主界面：对话主导（chat-first）——对话铺满全宽做底层，其头部升格为全局标题栏；
 // 左上三件套：cwd chip 开关目录树浮层 / ▾ 历史工作目录 / 换目录选择器（见 ChatPanel）。
 // 目录树浮层从标题栏下方垂到底（左缘贴边），编辑器浮层紧贴其右——两者各自头部有 X
 // 独立关闭（相当于把原三栏的树/编辑器搬到标题栏下面浮起）；编辑器最后一个 tab
@@ -51,11 +51,11 @@ function Resizer({ onDrag, lineAt = "-left-px" }: { onDrag: (dx: number) => void
 
 export default function App() {
   // 工作目录记忆：用户设定过（localStorage）则刷新后沿用，不再跟会话 cwd 走。
-  // 默认值不硬编码（ccweb 不总在容器里，HOME 不一定是 /root）：未知时用上次
-  // env 下发的 HOME 缓存（ccweb.home——首访后刷新零等待，无"未设定"窗口），仍未知则空，
+  // 默认值不硬编码（qweb 不总在容器里，HOME 不一定是 /root）：未知时用上次
+  // env 下发的 HOME 缓存（qweb.home——首访后刷新零等待，无"未设定"窗口），仍未知则空，
   // 等 /api/env 下发 HOME 后由 env effect 设定
-  const savedRoot = (() => { try { return localStorage.getItem("ccweb.root"); } catch { return null; } })();
-  const cachedHome = (() => { try { return localStorage.getItem("ccweb.home"); } catch { return null; } })();
+  const savedRoot = (() => { try { return localStorage.getItem("qweb.root"); } catch { return null; } })();
+  const cachedHome = (() => { try { return localStorage.getItem("qweb.home"); } catch { return null; } })();
   const userRoot = useRef(!!savedRoot);
   const [root, setRoot] = useState<string>(savedRoot || cachedHome || "");
   // 打开文件请求：seq 递增保证同路径重复请求也触发（双击=钉住已开的预览）
@@ -90,7 +90,7 @@ export default function App() {
   const [bootTick, setBootTick] = useState(0);
   // 布局持久化：浮层组开合与宽度刷新后保持（localStorage）；默认全关 = 纯对话第一印象
   const saved = (() => {
-    try { return JSON.parse(localStorage.getItem("ccweb.layout") || "{}"); }
+    try { return JSON.parse(localStorage.getItem("qweb.layout") || "{}"); }
     catch { return {}; }
   })();
   const [wTree, setWTree] = useState(saved.wTree ?? 280);
@@ -107,7 +107,7 @@ export default function App() {
   }, []);
   useEffect(() => { refresh().then(() => setBooted(true)); }, [refresh]);
   useEffect(() => {
-    localStorage.setItem("ccweb.layout",
+    localStorage.setItem("qweb.layout",
       JSON.stringify({ showTree, showEditor, wTree, wEditor }));
   }, [showTree, showEditor, wTree, wEditor]);
   useEffect(() => { if (!live) setPending(null); }, [live]);
@@ -127,10 +127,10 @@ export default function App() {
   useEffect(() => {
     const apply = (px: number, tip: boolean) => {
       document.documentElement.style.fontSize = px + "px";
-      localStorage.setItem("ccweb.fontSize", String(px));
+      localStorage.setItem("qweb.fontSize", String(px));
       if (tip) { setFsTip(px); clearTimeout(fsTimer.current); fsTimer.current = window.setTimeout(() => setFsTip(null), 1200); }
     };
-    const saved = Number(localStorage.getItem("ccweb.fontSize"));
+    const saved = Number(localStorage.getItem("qweb.fontSize"));
     if (saved >= 12 && saved <= 24 && saved !== 18) apply(saved, false); // 恢复记忆（18=默认，见 index.css 基准）
     const h = (e: KeyboardEvent) => {
       if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
@@ -150,18 +150,18 @@ export default function App() {
   // 引擎清单（/api/env 下发；qtom 在后端配了 --dsweb 才出现）与偏好（下次新会话用）
   const [engines, setEngines] = useState<{ id: string; label: string }[]>([]);
   const [enginePref, setEnginePref] = useState<string>(() => {
-    try { return localStorage.getItem("ccweb.engine") || "claude"; } catch { return "claude"; }
+    try { return localStorage.getItem("qweb.engine") || "claude"; } catch { return "claude"; }
   });
   const onEnginePref = (id: string) => {
     setEnginePref(id);
-    try { localStorage.setItem("ccweb.engine", id); } catch {}
+    try { localStorage.setItem("qweb.engine", id); } catch {}
   };
   useEffect(() => {
     fetch(`${API}/env`).then((r) => r.json())
       .then((d: any) => {
         if (typeof d.home === "string" && d.home) {
           setHome(d.home);
-          try { localStorage.setItem("ccweb.home", d.home); } catch {} // 下次打开零等待兜底
+          try { localStorage.setItem("qweb.home", d.home); } catch {} // 下次打开零等待兜底
           // 从未人工设定过：优先"最近有会话的目录"（全新环境/桌面 WebView 首开零记忆时
           // 直接落回用户实际工作的地方，历史浮层/目录树才对得上）；无任何历史才用 home
           if (!userRoot.current) {
@@ -323,8 +323,8 @@ export default function App() {
   // 旧会话消息在官方 transcript 里，历史列表可 resume 续聊；server 侧空闲 20min 自动回收进程。
   const pushRecent = (p: string) => {
     try {
-      const cur = JSON.parse(localStorage.getItem("ccweb.recents") || "[]").filter((x: string) => x !== p);
-      localStorage.setItem("ccweb.recents", JSON.stringify([p, ...cur].slice(0, 5)));
+      const cur = JSON.parse(localStorage.getItem("qweb.recents") || "[]").filter((x: string) => x !== p);
+      localStorage.setItem("qweb.recents", JSON.stringify([p, ...cur].slice(0, 5)));
     } catch {}
   };
   const setWorkspace = (path: string) => {
@@ -332,7 +332,7 @@ export default function App() {
     setRoot(path);
     userRoot.current = true;
     pushRecent(path);
-    try { localStorage.setItem("ccweb.root", path); } catch {}
+    try { localStorage.setItem("qweb.root", path); } catch {}
     // "目录树是左上角选择的结果"：选定即展开浮层（此前关着也开）
     setShowTree(true);
     // 提示走 toast（短暂浮现自动消失）；旧会话消息在官方 transcript，可 resume 续聊

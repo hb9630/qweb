@@ -1,5 +1,5 @@
 // agent 核心：stdin 消息驱动轮次循环。
-// 输入 AgentMsg（ccweb 经 stdin 写 CC 格式，main 解析后转投信道）；
+// 输入 AgentMsg（qweb 经 stdin 写 CC 格式，main 解析后转投信道）；
 // 输出经 Emitter（CC 事件 stdout + transcript 双写）。
 // 中断：专用信道（turn 开始前 drain 陈旧中断；turn 内所有 await 点 select 捕获）。
 use crate::client::{ChatReply, DsClient};
@@ -10,8 +10,8 @@ use std::sync::Arc;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 pub enum AgentMsg {
-    User { text: String },      // ccweb {"type":"user","message":{content:[text]}}（图片块忽略）
-    Perm { rid: String, allow: bool }, // ccweb control_response（审批回包）
+    User { text: String },      // qweb {"type":"user","message":{content:[text]}}（图片块忽略）
+    Perm { rid: String, allow: bool }, // qweb control_response（审批回包）
 }
 
 pub struct Agent {
@@ -91,7 +91,7 @@ impl Agent {
                 AgentMsg::Perm { .. } => {} // 空闲期审批回包（迟到/孤儿）：忽略
             }
         }
-        // stdin 关闭：ccweb 关 stdin = 优雅关闭（RPC 语义），直接退
+        // stdin 关闭：qweb 关 stdin = 优雅关闭（RPC 语义），直接退
     }
 
     fn clear(&mut self) {
@@ -239,7 +239,7 @@ impl Agent {
         if name == "bash" {
             let allowed = self.ask_perm(tid, name, input).await?;
             if !allowed {
-                return Err(ToolErr::Denied("User denied via ccweb".into()));
+                return Err(ToolErr::Denied("User denied via qweb".into()));
             }
         }
         let Agent { cwd, home, inter, .. } = self;

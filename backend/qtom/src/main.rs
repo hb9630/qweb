@@ -1,7 +1,7 @@
 // qtom —— qkeeper 动物园第一只居民（猫）：编码 agent。
-// 被	ccweb spawn（stdio 说 CC stream-json 同构协议），亦可终端直用：
+// 被	qweb spawn（stdio 说 CC stream-json 同构协议），亦可终端直用：
 //   qtom -p "看看这个目录" --yes        # 单发模式
-//   ccweb 侧：DSWEB_URL/DSWEB_TOKEN env + 长驻 stdio 模式
+//   qweb 侧：DSWEB_URL/DSWEB_TOKEN env + 长驻 stdio 模式
 mod agent;
 mod client;
 mod proto;
@@ -18,7 +18,7 @@ const USAGE: &str = "\
 qtom —— 编码 agent 猫（qkeeper 动物园）
 
 用法：
-  qtom [选项]                      stdio 长驻模式（ccweb 宿主）
+  qtom [选项]                      stdio 长驻模式（qweb 宿主）
   qtom -p <prompt> [选项]          单发模式（终端直用）
 
 选项：
@@ -87,7 +87,7 @@ fn val(args: &mut impl Iterator<Item = String>, flag: &str) -> String {
 
 async fn run(a: Args) {
     let quiet = a.prompt.is_some(); // -p 模式：事件静默（transcript 照写），结果文本上 stdout
-    // 会话身份：resume 沿用 sid（ccweb 侧 dedup/锚点依赖），新会话生成 uuid
+    // 会话身份：resume 沿用 sid（qweb 侧 dedup/锚点依赖），新会话生成 uuid
     let sid = a.resume.clone().unwrap_or_else(proto::uuid);
     let tr = Transcript::open(&a.projects, &a.cwd, &sid);
     let mut em = Emitter::new(quiet, &sid, &a.cwd, tr);
@@ -120,14 +120,14 @@ async fn run(a: Args) {
         }
         None => {
             // stdio 长驻：stdin 泵（按行解析 CC 格式 → 信道）；tx 移交泵后本地 drop，
-            // stdin 关闭 → 泵结束 → tx 全 drop → run 循环退出（ccweb 关 stdin = 优雅关闭）
+            // stdin 关闭 → 泵结束 → tx 全 drop → run 循环退出（qweb 关 stdin = 优雅关闭）
             pump_stdin(tx, itx);
             ag.run().await;
         }
     }
 }
 
-/// stdin 泵：ccweb 写来的三种帧转投 agent 信道。
+/// stdin 泵：qweb 写来的三种帧转投 agent 信道。
 /// - {"type":"user","message":{"content":"..."|[块]}}         → User
 /// - {"type":"control_response","response":{request_id,...}}  → Perm
 /// - {"type":"control_request","request":{"subtype":"interrupt"}} → interrupt

@@ -1,11 +1,11 @@
 // 三修复真链路验证：A) spawn 唤醒 → init 免首消息下发（slash 立即可用）
-// B) set_permission_mode 经 ccweb WS 的回包 + status 广播  C) result.usage 被 transcript
+// B) set_permission_mode 经 qweb WS 的回包 + status 广播  C) result.usage 被 transcript
 // 单请求真值替换（不再按整轮累计虚高）。用法：node fix3-verify.mjs [base]
 import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
 import path from "node:path";
 const base = (process.argv[2] || "http://127.0.0.1:18090").replace(/\/+$/, "");
-const CWD = path.join(process.env.TEMP || "/tmp", "ccweb-verify");
+const CWD = path.join(process.env.TEMP || "/tmp", "qweb-verify");
 fs.mkdirSync(CWD, { recursive: true });
 
 const s = await fetch(`${base}/api/sessions`, {
@@ -30,7 +30,7 @@ if (!init.session_id) throw new Error("✗ A：init 无 session_id");
 sid = init.session_id;
 console.log(`✓ A：init ${(Date.now() - t0)}ms 即达（未发首条消息）—— slash_commands=${init.slash_commands?.length ?? 0} 项，permissionMode=${init.permissionMode}`);
 
-// B：经 ccweb WS 通道切模式
+// B：经 qweb WS 通道切模式
 ws.send(JSON.stringify({ t: "ctrl", sub: "set_permission_mode", args: { mode: "plan" } }));
 let modeEcho = null, statusBc = null;
 const t1 = Date.now();

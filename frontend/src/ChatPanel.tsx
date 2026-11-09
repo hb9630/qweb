@@ -58,7 +58,7 @@ const SLASH_DESC: Record<string, string> = {
 // 中转会把模型名剥成裸名（glm-5.3[1m] → glm-5.3），兜底 200k 会把 1M 会话算成
 // 5 倍虚高。推定链（只在渲染时取，ctx% 不在 state 定格——晚到的信息也能生效）：
 //   1) localStorage 记忆：result 的 modelUsage.contextWindow（live 流带原名键；
-//      历史回放的合成 result 由服务端落盘记忆回注，见 server 的 ccweb-ctxwin.json）
+//      历史回放的合成 result 由服务端落盘记忆回注，见 server 的 qweb-ctxwin.json）
 //      经 rememberCtxWin 按归一名写入
 //   2) /api/env 的模型清单（settings 推导，含 [1m] 原名）→ 裸名命中即 1M
 const normModel = (m: unknown) => String(m ?? "").replace(/\[1m\]$/i, "");
@@ -66,12 +66,12 @@ const ctxWinHints = new Set<string>(); // env 清单里带 [1m] 的模型归一�
 const rememberCtxWin = (mu: any) => {
   try {
     for (const [k, v] of Object.entries(mu ?? {}))
-      if ((v as any)?.contextWindow) localStorage.setItem(`ccweb.ctxwin.${normModel(k)}`, String(v.contextWindow));
+      if ((v as any)?.contextWindow) localStorage.setItem(`qweb.ctxwin.${normModel(k)}`, String(v.contextWindow));
   } catch {}
 };
 const ctxWindowOf = (model: string): number => {
   try {
-    const saved = Number(localStorage.getItem(`ccweb.ctxwin.${normModel(model)}`));
+    const saved = Number(localStorage.getItem(`qweb.ctxwin.${normModel(model)}`));
     if (saved > 0) return saved;
   } catch {}
   if (ctxWinHints.has(normModel(model))) return 1_000_000;
@@ -87,7 +87,7 @@ function toolState(b: Extract<UIBlock, { k: "tool" }>) {
 // 块稳定 id：render key 用（位置键在窗口移动时整列 remount，滚动锚定失效）。
 // 计数器挂 globalThis：Fast Refresh 重跑模块不清零——清零后新块 bid 与旧块撞 key，
 // 消息列表闪烁、块互相顶掉（仅开发态热替换触发，但正是调试时的日常路径）
-const nextBid = () => ((globalThis as any).__ccwebBID = ((globalThis as any).__ccwebBID ?? 0) + 1);
+const nextBid = () => ((globalThis as any).__qwebBID = ((globalThis as any).__qwebBID ?? 0) + 1);
 
 // 不 export：此文件要保持"仅组件导出"，Fast Refresh 才能热替换（多一个非组件导出就退化成整页刷新）
 function ccReducer(s: State, a: Action): State {
@@ -295,7 +295,7 @@ function ccReducer(s: State, a: Action): State {
         const mName = normModel(ev.model ?? s.model);
         try {
           if (usedAbs > ctxWindowOf(mName, null, null) * 1.05)
-            localStorage.setItem(`ccweb.ctxwin.${mName}`, "1000000");
+            localStorage.setItem(`qweb.ctxwin.${mName}`, "1000000");
         } catch {}
         // 窗口推定（modelUsage→localStorage→hints→默认）移到渲染处：见 ctxPct 派生注释
         // 单调防抖：上下文只增不减（compact/clear 已各自重置），防网关 usage 偶发波动。
@@ -761,7 +761,7 @@ export default function ChatPanel({
   // 标题栏左上三件套的弹出层：▾ 历史工作目录 / 换目录选择器（互斥，同时只开一个）
   const [hdrMenu, setHdrMenu] = useState<null | "recents" | "picker">(null);
   const recents = (() => {
-    try { return JSON.parse(localStorage.getItem("ccweb.recents") || "[]") as string[]; } catch { return []; }
+    try { return JSON.parse(localStorage.getItem("qweb.recents") || "[]") as string[]; } catch { return []; }
   })();
   // cwd 显示：POSIX home 子树内 ~/ 相对；win（home 为盘符形态）直接绝对路径——用户不识 ~
   const relPath = (p: string) =>
@@ -891,7 +891,7 @@ export default function ChatPanel({
   // 未送达的消息只存在于此（CLI 无感知），不跨端同步。
   interface SteerItem { id: number; text: string; urls: string[] }
   const steerSeq = useRef(0);
-  const steerKey = session ? `ccweb.steer.${session.claudeSid ?? session.id}` : null;
+  const steerKey = session ? `qweb.steer.${session.claudeSid ?? session.id}` : null;
   const [steerQ, setSteerQ] = useState<SteerItem[]>(() => {
     if (!steerKey) return [];
     try {
@@ -921,7 +921,7 @@ export default function ChatPanel({
   // localStorage 持久化：刷新后 ↑ 仍能召回（含已排队未送的插话）
   const inputHist = useRef<string[]>((() => {
     try {
-      const a = JSON.parse(localStorage.getItem("ccweb.inputhist") || "[]");
+      const a = JSON.parse(localStorage.getItem("qweb.inputhist") || "[]");
       return Array.isArray(a) ? a.filter((x: any) => typeof x === "string").slice(-100) : [];
     } catch { return []; }
   })());
@@ -1029,7 +1029,7 @@ export default function ChatPanel({
     if (t && h[h.length - 1] !== t) {
       h.push(t);
       if (h.length > 100) h.shift();
-      try { localStorage.setItem("ccweb.inputhist", JSON.stringify(h)); } catch {}
+      try { localStorage.setItem("qweb.inputhist", JSON.stringify(h)); } catch {}
     }
     histNavIdx.current = -1;
     const urls = imgs.map((i) => i.url);
@@ -1120,8 +1120,8 @@ export default function ChatPanel({
     toast.info(`模型切换已提交：${v}`, { description: v === "default" ? "回会话默认模型，下一轮对话生效" : "下一轮对话生效；非法模型名将在请求时报错" });
     if (!presets.includes(v)) {
       try {
-        const rec = [v, ...JSON.parse(localStorage.getItem("ccweb.models") || "[]").filter((x: string) => x !== v)].slice(0, 6);
-        localStorage.setItem("ccweb.models", JSON.stringify(rec));
+        const rec = [v, ...JSON.parse(localStorage.getItem("qweb.models") || "[]").filter((x: string) => x !== v)].slice(0, 6);
+        localStorage.setItem("qweb.models", JSON.stringify(rec));
       } catch {}
     }
     setMenu(null);
@@ -1251,7 +1251,7 @@ export default function ChatPanel({
     : live ? "新会话" : "（空会话）";
 
   // 终端续跑命令：TUI 的 resume 列表不收 SDK/stream-json 会话（无 ai-title 索引），
-  // cd 到工作目录 + 官方 sid 直连是唯一入口；一键复制给"ccweb 功能不全时切 TUI 继续"
+  // cd 到工作目录 + 官方 sid 直连是唯一入口；一键复制给"qweb 功能不全时切 TUI 继续"
   const claudeSid = session?.claudeSid ?? initSid ?? historyEvents?.resumeSid;
   // 新会话 init 到达才有官方 sid——此刻补写 URL 锚点（App 侧只在已知 sid 的路径写）
   useEffect(() => { if (claudeSid) setHashSid(claudeSid); }, [claudeSid]);
@@ -1587,7 +1587,7 @@ export default function ChatPanel({
                 <div className="flex flex-wrap gap-1">
                   {(() => {
                     let rec: string[] = [];
-                    try { rec = JSON.parse(localStorage.getItem("ccweb.models") || "[]"); } catch {}
+                    try { rec = JSON.parse(localStorage.getItem("qweb.models") || "[]"); } catch {}
                     return [...rec.filter((x) => !presets.includes(x) && x !== s.model), ...presets]
                       .filter((x, i, a) => a.indexOf(x) === i && x !== s.model).slice(0, 13);
                   })().map((m) => (

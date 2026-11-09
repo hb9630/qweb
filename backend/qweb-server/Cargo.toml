@@ -1,16 +1,16 @@
 [package]
-name = "ccweb-server"
+name = "qweb-server"
 version = "0.1.0"
 edition = "2021"
-description = "ccweb 服务进程：bind/信号/启动日志（业务在 ccweb-core）；desktop feature = Windows Tauri 壳"
+description = "qweb 服务进程：bind/信号/启动日志（业务在 qweb-core）；desktop feature = Windows Tauri 壳"
 
-# 产物名对齐部署名：target/release/ccweb → /usr/local/ccweb（make/make install 同款语义）
+# 产物名对齐部署名：target/release/qweb → /usr/local/qweb（make/make install 同款语义）
 [[bin]]
 name = "qweb"
 path = "src/main.rs"
 
 # Windows 桌面壳（Tauri + WebView2，窗口导航进程内 axum）：需 --features desktop，
-# 仅 Windows 编译（其他平台用 ccweb 浏览器版）
+# 仅 Windows 编译（其他平台用 qweb 浏览器版）
 [[bin]]
 name = "qweb-desktop"
 path = "src/bin/desktop.rs"
@@ -20,7 +20,7 @@ required-features = ["desktop"]
 desktop = ["dep:tauri", "dep:tauri-build"]
 
 [dependencies]
-ccweb-core = { path = "../ccweb-core" }
+qweb-core = { path = "../qweb-core" }
 axum = "0.8"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "time"] }
 reqwest = { version = "0.13", default-features = false, features = ["rustls"] }

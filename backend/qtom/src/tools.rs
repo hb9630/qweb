@@ -117,7 +117,7 @@ pub async fn bash(cwd: &str, env_home: &str, input: &Value) -> Result<String, St
         .stderr(std::process::Stdio::piped())
         .kill_on_drop(true);
     #[cfg(unix)]
-    c.process_group(0); // 整组信号清理（与 ccweb spawn claude 同款）
+    c.process_group(0); // 整组信号清理（与 qweb spawn claude 同款）
     #[cfg(not(unix))]
     let _ = &mut c;
     let mut child = c.spawn().map_err(|e| format!("spawn sh: {e}"))?;

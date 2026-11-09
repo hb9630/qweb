@@ -7,7 +7,7 @@ use crate::config::AuthMode;
 use std::collections::HashSet;
 use std::sync::Mutex;
 
-pub const COOKIE: &str = "ccweb_auth";
+pub const COOKIE: &str = "qweb_auth";
 
 pub struct AuthState {
     pub mode: AuthMode,

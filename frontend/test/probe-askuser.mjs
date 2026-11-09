@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 
 const strategy = process.argv[2] || "plain-allow";
-const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "ccweb-ask-"));
+const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "qweb-ask-"));
 const bin = String.raw`C:\Users\cnhua\AppData\Roaming\npm\node_modules\@anthropic-ai\claude-code\bin\claude.exe`;
 const p = spawn(bin, [
   "--input-format", "stream-json", "--output-format", "stream-json",
@@ -63,8 +63,8 @@ p.stdout.on("data", (d) => {
           console.log(`[${el()}] <<< freetext-尝试:\n${JSON.stringify(resp)}`);
           w({ type: "control_response", response: { subtype: "success", request_id: rid, response: resp } });
         } else {
-          // plain-allow：原 input 原样回（ccweb 现状）
-          console.log(`[${el()}] <<< plain-allow（原样 input，ccweb 现状）`);
+          // plain-allow：原 input 原样回（qweb 现状）
+          console.log(`[${el()}] <<< plain-allow（原样 input，qweb 现状）`);
           w({ type: "control_response", response: { subtype: "success", request_id: rid, response: { behavior: "allow", updatedInput: ev.request?.input } } });
         }
       }, 1500);

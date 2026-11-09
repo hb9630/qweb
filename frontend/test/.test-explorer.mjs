@@ -6216,14 +6216,14 @@ function Explorer({
   }, []);
   const [showHidden, setShowHidden] = useState11(() => {
     try {
-      return localStorage.getItem("ccweb.hidden") === "1";
+      return localStorage.getItem("qweb.hidden") === "1";
     } catch {
       return false;
     }
   });
   useEffect13(() => {
     try {
-      localStorage.setItem("ccweb.hidden", showHidden ? "1" : "0");
+      localStorage.setItem("qweb.hidden", showHidden ? "1" : "0");
     } catch {
     }
   }, [showHidden]);
@@ -6271,7 +6271,7 @@ function Explorer({
   };
   const persistOpen = (nodes) => {
     try {
-      localStorage.setItem("ccweb.expanded", JSON.stringify(collectOpen(nodes)));
+      localStorage.setItem("qweb.expanded", JSON.stringify(collectOpen(nodes)));
     } catch {
     }
   };
@@ -6283,12 +6283,12 @@ function Explorer({
     let saved;
     let savedSel = null;
     try {
-      saved = new Set(JSON.parse(localStorage.getItem("ccweb.expanded") || "[]"));
+      saved = new Set(JSON.parse(localStorage.getItem("qweb.expanded") || "[]"));
     } catch {
       saved = /* @__PURE__ */ new Set();
     }
     try {
-      savedSel = JSON.parse(localStorage.getItem("ccweb.sel") || "null");
+      savedSel = JSON.parse(localStorage.getItem("qweb.sel") || "null");
     } catch {
     }
     (async () => {
@@ -6304,15 +6304,15 @@ function Explorer({
   }, [root, listDir]);
   useEffect13(() => {
     try {
-      localStorage.setItem("ccweb.sel", JSON.stringify({ paths: [...sel], anchor: anchorRef.current }));
+      localStorage.setItem("qweb.sel", JSON.stringify({ paths: [...sel], anchor: anchorRef.current }));
     } catch {
     }
   }, [sel]);
   const migrateExpanded = (from, to) => {
     try {
-      const ex = JSON.parse(localStorage.getItem("ccweb.expanded") || "[]");
+      const ex = JSON.parse(localStorage.getItem("qweb.expanded") || "[]");
       const nx = ex.map((p) => p === from || p.startsWith(from + "/") ? to + p.slice(from.length) : p);
-      localStorage.setItem("ccweb.expanded", JSON.stringify(nx));
+      localStorage.setItem("qweb.expanded", JSON.stringify(nx));
     } catch {
     }
   };
@@ -6327,7 +6327,7 @@ function Explorer({
       });
       walkOpen(treeRef.current);
       try {
-        for (const p of JSON.parse(localStorage.getItem("ccweb.expanded") || "[]")) open.add(p);
+        for (const p of JSON.parse(localStorage.getItem("qweb.expanded") || "[]")) open.add(p);
       } catch {
       }
       treeRef.current = await restoreOpen(await listDir(root), open);
@@ -6339,7 +6339,7 @@ function Explorer({
       if (n.path === dir2) {
         let openSet = /* @__PURE__ */ new Set();
         try {
-          openSet = new Set(JSON.parse(localStorage.getItem("ccweb.expanded") || "[]"));
+          openSet = new Set(JSON.parse(localStorage.getItem("qweb.expanded") || "[]"));
         } catch {
         }
         return { ...n, open: true, loading: false, children: await restoreOpen(await listDir(n.path), openSet) };

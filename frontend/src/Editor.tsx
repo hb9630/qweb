@@ -201,7 +201,7 @@ export default function Editor({
   // 排在前则打开 effect 的幂等兜底（updater 内查重）保证同文件不重复开
   useEffect(() => {
     try {
-      const saved = JSON.parse(localStorage.getItem("ccweb.tabs") || "null");
+      const saved = JSON.parse(localStorage.getItem("qweb.tabs") || "null");
       if (saved && Array.isArray(saved.paths) && saved.paths.length) {
         setTabs(saved.paths.map((p: string) => ({
           path: p, name: p.split("/").pop() || p, original: "", content: "",
@@ -264,7 +264,7 @@ export default function Editor({
   // tabs 变化即持久化（挂载时的空态写入会被恢复后的重渲染立即覆盖，无碍）
   useEffect(() => {
     try {
-      localStorage.setItem("ccweb.tabs", JSON.stringify({
+      localStorage.setItem("qweb.tabs", JSON.stringify({
         paths: tabs.map((t) => t.path), active, preview,
       }));
     } catch {}

@@ -207369,7 +207369,7 @@ function Editor({
   }, [openReq?.seq]);
   useEffect4(() => {
     try {
-      const saved = JSON.parse(localStorage.getItem("ccweb.tabs") || "null");
+      const saved = JSON.parse(localStorage.getItem("qweb.tabs") || "null");
       if (saved && Array.isArray(saved.paths) && saved.paths.length) {
         setTabs(saved.paths.map((p5) => ({
           path: p5,
@@ -207400,7 +207400,7 @@ function Editor({
   }, []);
   useEffect4(() => {
     try {
-      localStorage.setItem("ccweb.tabs", JSON.stringify({
+      localStorage.setItem("qweb.tabs", JSON.stringify({
         paths: tabs.map((t5) => t5.path),
         active,
         preview

@@ -5,12 +5,12 @@ edition = "2021"
 
 # qtom —— qkeeper 动物园第一只居民（猫）：自研编码 agent。
 # 2026-11-09 下线：DeepSeek 账号风控，已移出 workspace 编译与发行（复活：backend/Cargo.toml members 加回）。
-# stdio 说 Claude Code stream-json 同构协议，被 ccweb spawn（亦可终端 -p 直用）；
+# stdio 说 Claude Code stream-json 同构协议，被 qweb spawn（亦可终端 -p 直用）；
 # 模型通道为 OpenAI 兼容端点（dsweb daemon → DeepSeek 网页版）。
 
 [dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "fs", "process", "io-std", "io-util", "signal", "sync"] }
-serde_json = { version = "1", features = ["preserve_order"] } # 事件字段序即 wire 序（与 ccweb-core 同约）
+serde_json = { version = "1", features = ["preserve_order"] } # 事件字段序即 wire 序（与 qweb-core 同约）
 uuid = { version = "1", features = ["v4"] }
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "stream"] }
 futures-util = "0.3"

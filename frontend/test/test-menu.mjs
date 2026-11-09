@@ -175,7 +175,7 @@ console.log(opened.some(([p, pin]) => p === "/root/a.txt" && pin === true) ? "�
 // --- 场景9：展开状态持久化：展开过 sub → 重挂载后 sub 自动展开 ---
 {
   await new Promise((r) => setTimeout(r, 50));
-  const saved = localStorage.getItem("ccweb.expanded");
+  const saved = localStorage.getItem("qweb.expanded");
   const dirRow2 = document.querySelector('[data-path="/root/sub"]');
   console.log(saved && saved.includes("/root/sub") && dirRow2
     ? `✓ 展开已持久化（localStorage: ${saved}）`
@@ -196,7 +196,7 @@ console.log(opened.some(([p, pin]) => p === "/root/a.txt" && pin === true) ? "�
   }
   console.log(subChild
     ? "✓ 重挂载后展开恢复（/root/sub 子行可见，含场景8改名后的 b.txt）"
-    : `✗ 恢复异常：现有路径=${JSON.stringify([...document.querySelectorAll("[data-path]")].map((e) => e.dataset.path))} ls=${localStorage.getItem("ccweb.expanded")}`);
+    : `✗ 恢复异常：现有路径=${JSON.stringify([...document.querySelectorAll("[data-path]")].map((e) => e.dataset.path))} ls=${localStorage.getItem("qweb.expanded")}`);
 }
 
 // --- 场景10：选中持久化：点击文件后 localStorage 记录，重挂载后选中恢复 ---
@@ -211,7 +211,7 @@ console.log(opened.some(([p, pin]) => p === "/root/a.txt" && pin === true) ? "�
   else {
     fire(frow, "mousedown", { button: 0, bubbles: true });
     await tick();
-    const sv = localStorage.getItem("ccweb.sel");
+    const sv = localStorage.getItem("qweb.sel");
     console.log(sv && sv.includes("/root/b.txt")
       ? `✓ 选中已持久化（${sv}）` : `✗ 持久化异常: ${sv}`);
     // 重挂载恢复

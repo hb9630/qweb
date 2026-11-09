@@ -1,4 +1,4 @@
-// ccweb-core：后端业务核心（lib）。ccweb-server bin 与将来的 Tauri 壳共用。
+// qweb-core：后端业务核心（lib）。qweb-server bin 与将来的 Tauri 壳共用。
 //
 // 分发架构：与 Node 版同构——单个中央 handler 按源码顺序 if 链匹配
 // （未知 /api/* 自然落入静态/SPA），而非 axum 声明式路由；strip_base 只做一处。
@@ -209,7 +209,7 @@ pub fn spawn_background(app: Arc<App>) {
             let mut victims: Vec<String> = vec![];
             for (id, s) in app.sessions.read().await.iter() {
                 if s.clients_empty() && s.alive() && now.saturating_sub(s.last_active()) > 20 * 60 * 1000 {
-                    println!("[ccweb] 会话 {id} 空闲回收（可从历史恢复）");
+                    println!("[qweb] 会话 {id} 空闲回收（可从历史恢复）");
                     s.kill();
                     victims.push(id.clone());
                 }

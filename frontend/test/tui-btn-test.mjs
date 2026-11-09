@@ -14,5 +14,5 @@ await btn.click(); await pg.waitForTimeout(400);
 console.log((await pg.locator("button:has-text('已复制')").count()) ? "✓ 复制回显" : "✗ 复制回显缺失");
 // 清理本会话
 const list = await (await fetch("http://127.0.0.1:18090/api/sessions")).json();
-for (const s of list) if (s.cwd === "/tmp" || s.cwd?.includes("ccweb")) { if (s.cwd === "/tmp") await fetch(`http://127.0.0.1:18090/api/sessions/${s.id}`, { method: "DELETE" }).catch(()=>{}); }
+for (const s of list) if (s.cwd === "/tmp" || s.cwd?.includes("qweb")) { if (s.cwd === "/tmp") await fetch(`http://127.0.0.1:18090/api/sessions/${s.id}`, { method: "DELETE" }).catch(()=>{}); }
 await b.close();

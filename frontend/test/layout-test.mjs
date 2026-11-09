@@ -105,7 +105,7 @@ try {
   ok(afterEdX.length === 2 && afterEdX[0] === true, `编辑器 X 独立收（树保留，floats=${JSON.stringify(afterEdX)}）`);
 
   // 6) ▾ 历史工作目录（预置 recents；当前目录打勾）
-  await page.addInitScript(() => localStorage.setItem("ccweb.recents", JSON.stringify(["/home/u"])));
+  await page.addInitScript(() => localStorage.setItem("qweb.recents", JSON.stringify(["/home/u"])));
   await page.goto(BASE); // 重新走 init 注入（addInitScript 只对下次导航生效）
   await page.waitForLoadState("networkidle");
   await sleep(900);
@@ -129,7 +129,7 @@ try {
   await sleep(300);
 
   // 8) 末 tab 关闭 → 编辑器收、树保留
-  // （第 5 步树保留 → ccweb.layout 持久化 showTree:true → goto 后树已自动开，chip 只在关着时才点）
+  // （第 5 步树保留 → qweb.layout 持久化 showTree:true → goto 后树已自动开，chip 只在关着时才点）
   if (!(await page.locator("aside").isVisible())) {
     await page.locator("button[title^='工作目录']").click();
     await sleep(600);

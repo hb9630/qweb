@@ -120,9 +120,9 @@ export default function Explorer({
   useEffect(() => { kdEnv().then(setEnv).catch(() => {}); }, []);
   // 隐藏文件开关（localStorage 记忆；listDir 依赖它 → 切换即整树刷新）
   const [showHidden, setShowHidden] = useState(() => {
-    try { return localStorage.getItem("ccweb.hidden") === "1"; } catch { return false; }
+    try { return localStorage.getItem("qweb.hidden") === "1"; } catch { return false; }
   });
-  useEffect(() => { try { localStorage.setItem("ccweb.hidden", showHidden ? "1" : "0"); } catch {} }, [showHidden]);
+  useEffect(() => { try { localStorage.setItem("qweb.hidden", showHidden ? "1" : "0"); } catch {} }, [showHidden]);
   // （工作目录的设定入口 = 标题栏左上三件套：cwd chip/历史目录/换目录选择器，见 ChatPanel 与 DirPicker）
 
   // 右键菜单 / 内联编辑 / 上传中 / 拖放目标 / 多选 / 框选
@@ -165,7 +165,7 @@ export default function Explorer({
     return out;
   };
   const persistOpen = (nodes: TreeNode[]) => {
-    try { localStorage.setItem("ccweb.expanded", JSON.stringify(collectOpen(nodes))); } catch {}
+    try { localStorage.setItem("qweb.expanded", JSON.stringify(collectOpen(nodes))); } catch {}
   };
   // 恢复：saved 集合里的目录递归展开（父层必在集合内——展开深层前必先展开父层）
   const restoreOpen = async (nodes: TreeNode[], saved: Set<string>): Promise<TreeNode[]> =>
@@ -177,8 +177,8 @@ export default function Explorer({
   useEffect(() => {
     let saved: Set<string>;
     let savedSel: { paths?: string[]; anchor?: string | null } | null = null;
-    try { saved = new Set(JSON.parse(localStorage.getItem("ccweb.expanded") || "[]")); } catch { saved = new Set(); }
-    try { savedSel = JSON.parse(localStorage.getItem("ccweb.sel") || "null"); } catch {}
+    try { saved = new Set(JSON.parse(localStorage.getItem("qweb.expanded") || "[]")); } catch { saved = new Set(); }
+    try { savedSel = JSON.parse(localStorage.getItem("qweb.sel") || "null"); } catch {}
     (async () => {
       let t = await listDir(root);
       if (saved.size) t = await restoreOpen(t, saved);
@@ -195,16 +195,16 @@ export default function Explorer({
 
   // 选中持久化：sel 变化即写（anchor 一并记录，恢复时"当前项"深底白字不丢）
   useEffect(() => {
-    try { localStorage.setItem("ccweb.sel", JSON.stringify({ paths: [...sel], anchor: anchorRef.current })); } catch {}
+    try { localStorage.setItem("qweb.sel", JSON.stringify({ paths: [...sel], anchor: anchorRef.current })); } catch {}
   }, [sel]);
 
   // 定向刷新：dir 是树中节点则重载其 children 并展开；dir = root 时全量
-  // 展开状态迁移:改名/移动目录时,ccweb.expanded 里的路径前缀跟随改写
+  // 展开状态迁移:改名/移动目录时,qweb.expanded 里的路径前缀跟随改写
   const migrateExpanded = (from: string, to: string) => {
     try {
-      const ex = JSON.parse(localStorage.getItem("ccweb.expanded") || "[]") as string[];
+      const ex = JSON.parse(localStorage.getItem("qweb.expanded") || "[]") as string[];
       const nx = ex.map((p) => (p === from || p.startsWith(from + "/") ? to + p.slice(from.length) : p));
-      localStorage.setItem("ccweb.expanded", JSON.stringify(nx));
+      localStorage.setItem("qweb.expanded", JSON.stringify(nx));
     } catch {}
   };
 
@@ -216,7 +216,7 @@ export default function Explorer({
         if (n.dir && n.open) { open.add(n.path); if (n.children) walkOpen(n.children); }
       });
       walkOpen(treeRef.current);
-      try { for (const p of JSON.parse(localStorage.getItem("ccweb.expanded") || "[]")) open.add(p); } catch {}
+      try { for (const p of JSON.parse(localStorage.getItem("qweb.expanded") || "[]")) open.add(p); } catch {}
       treeRef.current = await restoreOpen(await listDir(root), open);
       setTree(treeRef.current);
       return;
@@ -226,7 +226,7 @@ export default function Explorer({
         if (!n.dir) return n;
         if (n.path === dir) {
           let openSet = new Set<string>();
-          try { openSet = new Set(JSON.parse(localStorage.getItem("ccweb.expanded") || "[]")); } catch {}
+          try { openSet = new Set(JSON.parse(localStorage.getItem("qweb.expanded") || "[]")); } catch {}
           return { ...n, open: true, loading: false, children: await restoreOpen(await listDir(n.path), openSet) };
         }
         if (n.open && dir.startsWith(n.path + "/")) return { ...n, children: await walk(n.children || []) };

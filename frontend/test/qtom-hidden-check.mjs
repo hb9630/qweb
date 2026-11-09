@@ -1,10 +1,10 @@
 // qtom 前端隐藏验证（2026-11-09 通道下线）：后端配了 --dsweb（engines 含 qtom）时，
-// UI 引擎切换按钮不出现；localStorage 残留 ccweb.engine=qtom 时新会话回落 claude。
-// 前置：dsweb-stub.mjs 在 8312 + ccweb 以 --dsweb http://127.0.0.1:8312 启动。
+// UI 引擎切换按钮不出现；localStorage 残留 qweb.engine=qtom 时新会话回落 claude。
+// 前置：dsweb-stub.mjs 在 8312 + qweb 以 --dsweb http://127.0.0.1:8312 启动。
 // 用法：node frontend/test/qtom-hidden-check.mjs http://127.0.0.1:18099
 import { chromium } from "playwright";
 const base = process.argv[2]?.replace(/\/+$/, "");
-if (!base) { console.error("用法: node qtom-hidden-check.mjs <ccweb-base-url>"); process.exit(2); }
+if (!base) { console.error("用法: node qtom-hidden-check.mjs <qweb-base-url>"); process.exit(2); }
 const fail = (m) => { console.error("✗ " + m); process.exit(1); };
 
 // 0. 后端确实暴露 qtom（前置成立才验证得上"前端隐藏"）
@@ -18,7 +18,7 @@ catch { b = await chromium.launch({ channel: "chrome" }); } // 无 playwright �
 const pg = await b.newPage();
 try {
   // 1. 残留 qtom 偏好 → 打开后应回落
-  await pg.addInitScript(() => localStorage.setItem("ccweb.engine", "qtom"));
+  await pg.addInitScript(() => localStorage.setItem("qweb.engine", "qtom"));
   await pg.goto(base + "/");
   await pg.waitForTimeout(2500); // /api/env 到达 + 引擎清单处理
   const body = await pg.locator("body").innerText();

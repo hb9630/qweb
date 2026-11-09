@@ -114,7 +114,7 @@ async fn post(app: &App, body: Option<Body>) -> Response<Body> {
             if k == crate::sessions::EngineKind::Qtom && !app.cfg.dsweb_enabled() {
                 return json_resp(
                     StatusCode::BAD_REQUEST,
-                    json!({ "error": "qtom 引擎未配置模型端点（--dsweb 或 CCWEB_DSWEB_URL）" }),
+                    json!({ "error": "qtom 引擎未配置模型端点（--dsweb 或 QWEB_DSWEB_URL）" }),
                 );
             }
             k
