@@ -187,17 +187,14 @@ async function newSession(tab) {
 }
 
 /**
- * 填充 + 发送 + 等 user 上屏（消息列表出现锚点消息）+ 稳态检测。返回回复全文。
+ * 填充 + 发送 + 等 user 上屏（右列文本出现锚点）+ 稳态检测。返回回复全文。
  * 页面时序不稳：填充读回验证 + 发送不生效重试（共三轮）。onDelta 收"安全外发前缀"
- * 增量（holdback 防 <tool_call 前缀泄漏）。消息级读取（adapter.readMsgs）——
- * 气泡选择器天然排除输入残留/侧栏/虚拟列表镜像。
+ * 增量（holdback 防 <tool_call 前缀泄漏）。右列几何文本（adapter.readMain）——
+ * 排除侧栏/输入残留/虚拟列表镜像；新会话与历史会话两套渲染组件均适用。
  */
 async function sendAndWait(tab, text, onDelta) {
   const norm = s => s.replace(/\s+/g, ' ');
   const anchor = norm(text.slice(-60)); // 锚点 = prompt 尾部片段（折行展示，归一匹配）
-  const readMsgs = async () => {
-    try { return JSON.parse(await tab.evalJs(adapter.readMsgs)) || []; } catch { return []; }
-  };
 
   let sentOk = false;
   for (let attempt = 0; attempt < 3 && !sentOk; attempt++) {
@@ -208,48 +205,45 @@ async function sendAndWait(tab, text, onDelta) {
     const filled = await tab.evalJs(`document.querySelector('textarea') && document.querySelector('textarea').value === ${JSON.stringify(text)}`).catch(() => false);
     if (!filled) { await sleep(1000); continue; } // React 重挂/弹回：稍候重填
     await sleep(400);
-    // 发送：CDP 真实鼠标点击（adapter 返回发送键坐标；组件监听 pointer 事件序列，
-    // JS .click() 不被识别）。坐标拿不到才 Enter 兜底（仅单行文本可靠）
-    const pos = await tab.evalJs(adapter.send).catch(() => false);
-    const xy = typeof pos === 'string' && /^\d+,\d+$/.test(pos) ? pos.split(',').map(Number) : null;
-    if (xy) {
-      await tab.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: xy[0], y: xy[1], button: 'left', clickCount: 1 });
-      await sleep(60);
-      await tab.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: xy[0], y: xy[1], button: 'left', clickCount: 1 });
-    } else if (adapter.enterFallback) {
+    const startPath = await tab.evalJs('location.pathname').catch(() => '');
+    // 发送：点发送键（insertText 同步过 React state 后 el.click() 有效）；
+    // 点击失败才 Enter 兜底（仅单行文本可靠）
+    const clicked = await tab.evalJs(adapter.send).catch(() => false);
+    if (!clicked && adapter.enterFallback) {
       await tab.evalJs("document.querySelector('textarea') && document.querySelector('textarea').focus()").catch(() => {});
       await tab.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 });
       await sleep(80);
       await tab.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 });
     }
-    for (let i = 0; i < 5 && !sentOk; i++) { // 2.5s 内锚点消息上屏 = 发送成功
+    // 发送成功判定（15s 窗）：URL 跳会话页（发消息即建会话，1-2s 可见）
+    // 或右列文本出现锚点（消息渲染完，可能数秒）——双信号防误判重复发送
+    for (let i = 0; i < 30 && !sentOk; i++) {
       await sleep(500);
-      const msgs = await readMsgs();
-      if (msgs.some(m => m.u && norm(m.t).includes(anchor))) sentOk = true;
+      const p = await tab.evalJs('location.pathname').catch(() => '');
+      if (p !== startPath) { sentOk = true; break; }
+      const main = norm(await tab.evalJs(adapter.readMain).catch(() => ''));
+      if (main.includes(anchor)) sentOk = true;
     }
   }
   if (!sentOk) throw new Error('发送失败（3 次尝试 user 消息均未上屏——页面可能弹登录/验证，或 adapter 需更新）');
 
-  // 稳态：消息列表序列化后连续 8 次采样不变（4s，跨过 AI 标题等离散抖动），
-  // 且锚点消息之后出现了 assistant 消息 = 回复完成
-  let sent = 0, lastSig = '', stable = 0;
+  // 稳态：右列文本连续 8 次采样不变（4s，跨过会话标题更新的一次离散抖动）
+  let sent = 0, lastMain = '', stable = 0;
   const t0 = Date.now();
   for (;;) {
     if (Date.now() - t0 > TIMEOUT_MS) throw new Error('回复超时 ' + TIMEOUT_MS + 'ms');
     await sleep(500);
-    const msgs = await readMsgs();
-    const sig = JSON.stringify(msgs);
-    if (sig === lastSig) stable++; else stable = 0;
-    lastSig = sig;
-    const i = msgs.findLastIndex ? msgs.findLastIndex(m => m.u && norm(m.t).includes(anchor)) : -1;
-    if (i < 0) continue;
-    const replyMsg = [...msgs.slice(i + 1)].reverse().find(m => !m.u && m.t); // 锚点后最后一条 assistant
-    const cur = replyMsg ? stripUiTail(norm(replyMsg.t)) : '';
+    const main = norm(await tab.evalJs(adapter.readMain).catch(() => ''));
+    if (main === lastMain) stable++; else stable = 0;
+    lastMain = main;
+    const idx = main.lastIndexOf(anchor);
+    if (idx < 0) continue;
+    const cur = stripUiTail(main.slice(idx + anchor.length));
     if (onDelta && cur) {
       const safe = cur.length - holdbackLen(cur); // 尾部疑似 <tool_call 前缀先扣住
       if (safe > sent) { onDelta(cur.slice(sent, safe)); sent = safe; }
     }
-    if (stable >= 8 && cur) return cur; // 消息列表 4s 静默 + 有回复 = 完成
+    if (stable >= 8 && cur) return cur; // 右列 4s 静默 + 锚点后有内容 = 完成
   }
 }
 

@@ -22,10 +22,9 @@ module.exports = {
   /// textarea.value 有值但组件 state 仍空，发送键点击无效，2026-11 实测）
   fill: `(() => { const ta = document.querySelector('textarea'); if (!ta) return false; ta.focus(); return true; })()`,
 
-  /// 定位发送键并返回中心坐标 "x,y"（daemon 用 CDP 真实鼠标事件点击——
-  /// ds-button 组件监听 pointer/mouse 事件序列，JS .click() 只派发 click 不被识别）。
-  /// 几何定位：输入框同带右侧；类名精确 ds-button--primary 优先
-  /// （iconLabelPrimary 等"含 primary 字样"的类是别的键）
+  /// 点发送键：el.click()（fill 已用 insertText 同步 React state，点击有效——
+  /// 2026-11 实测；几何定位输入框同带右侧，类名精确 ds-button--primary 优先，
+  /// iconLabelPrimary 等"含 primary 字样"的类是别的键）
   send: `(function(){
     const ta = document.querySelector('textarea');
     if (!ta) return false;
@@ -36,19 +35,37 @@ module.exports = {
       .filter(({ r }) => r.top < tr.bottom + 40 && r.bottom > tr.top - 40 && r.left >= tr.left)
       .sort((a, b) => (b.el.classList.contains('ds-button--primary') ? 1 : 0) - (a.el.classList.contains('ds-button--primary') ? 1 : 0));
     if (!cands.length) return false;
-    const r = cands[0].r;
-    return Math.round(r.left + r.width / 2) + ',' + Math.round(r.top + r.height / 2);
+    cands[0].el.click();
+    return true;
   })()`,
 
   /// Enter 键兜底（send 点击失败时；仅单行文本可靠）
   enterFallback: true,
 
-  /// 读消息列表：[{u:是否user, t:文本}] JSON。气泡级选择器——天然排除
-  /// 虚拟列表镜像/输入区残留/侧栏，稳态与回复提取都在消息级做（不碰 innerText）
-  readMsgs: `JSON.stringify([...document.querySelectorAll('.ds-message')].map(m => ({
-    u: m.classList.contains('d29f3d7d'),
-    t: (m.innerText || '').trim()
-  })))`,
+  /// 读对话文本：右列（主聊天列）几何定位——与输入框同列（left ≥ 输入框左-60）、
+  /// 在输入框上方（bottom ≤ 输入框顶+30）的容器里取文本最长者（不设子元素数上限——
+  /// 消息积累后列表容器子节点多，上限会把它整个过滤掉，2026-11 实测）。
+  /// 新会话与历史会话是两套渲染组件（后者才有 .ds-message 气泡）——气泡选择器
+  /// 覆盖不全；几何法两态通吃，且天然排除侧栏（左侧）/输入区（下方）。
+  /// 锚点差分与 UI 尾剥离由 daemon 做。
+  readMain: `(function(){
+    // 虚拟列表只渲染视口内消息——先滚到底让最新消息（锚点/回复）进 DOM
+    for (const el of document.querySelectorAll('[class*="virtual-list"], [class*="scroll-area"]')) {
+      try { el.scrollTop = el.scrollHeight; } catch (e) {}
+    }
+    const ta = document.querySelector('textarea');
+    if (!ta) return '';
+    const tr = ta.getBoundingClientRect();
+    let best = '';
+    for (const el of document.querySelectorAll('div')) {
+      const r = el.getBoundingClientRect();
+      if (r.width > 300 && r.left >= tr.left - 60 && r.bottom <= tr.top + 30) {
+        const t = (el.innerText || '').trim();
+        if (t.length > best.length) best = t;
+      }
+    }
+    return best;
+  })()`,
 
   /// 消息文本尾部的固定 UI 文案剥离表（改文案时更新此处）
   uiTail: ['内容由 AI 生成，请仔细甄别', '深度思考', '智能搜索', '重新生成', '分享', '停止生成'],
