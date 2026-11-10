@@ -44,7 +44,8 @@ export type ToolHeaderProps = {
     }
 );
 
-const statusLabels: Record<ToolPart["state"], string> = {
+// 本地扩展态（approval-*）：AI SDK 类型只定义四态，Record 放宽为 string 键
+const statusLabels: Record<string, string> = {
   "approval-requested": "Awaiting Approval",
   "approval-responded": "Responded",
   "input-available": "Running",
@@ -54,7 +55,7 @@ const statusLabels: Record<ToolPart["state"], string> = {
   "output-error": "Error",
 };
 
-const statusIcons: Record<ToolPart["state"], ReactNode> = {
+const statusIcons: Record<string, ReactNode> = {
   "approval-requested": <ClockIcon className="size-4 text-yellow-600" />,
   "approval-responded": <CheckCircleIcon className="size-4 text-blue-600" />,
   "input-available": <ClockIcon className="size-4 animate-pulse" />,
@@ -129,7 +130,7 @@ export const ToolInput = ({ className, input, ...props }: ToolInputProps) => (
 
 export type ToolOutputProps = ComponentProps<"div"> & {
   output: ToolPart["output"];
-  errorText: ToolPart["errorText"];
+  errorText?: ToolPart["errorText"];
 };
 
 export const ToolOutput = ({

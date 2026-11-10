@@ -23,7 +23,6 @@ export type UIBlock = { bid: number } & (
   // done 落定后整卡保留（选项不塌缩）：summary=确认文案，answers=各题答案
   // （问题文本 → 标签|[标签...]|自定义文本；重连/回放由 tool_result 文本尽力还原）
   | { k: "form"; rid: string; tuid: string; questions: any[]; done?: { summary: string; answers?: Record<string, string | string[]> } }
-  | { k: "stats"; durMs: number; cost: number; tokens: number }
   | { k: "note"; text: string }
 );
 

@@ -17,7 +17,7 @@ import { API, BASE, setHashSid } from "@/lib/api";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { CircleStop, FolderOpen, History, Plus, MessageSquare, RefreshCw, Loader2, X, Check, Shrink, Eraser, Zap, ListTodo, FilePen, Sparkles, FastForward, ShieldAlert, Ban, Paperclip, ArrowUp, Clock, Copy, ChevronDown, FolderSync, Cat, File as FileIcon, HelpCircle } from "lucide-react";
+import { CircleStop, FolderOpen, History, Plus, MessageSquare, RefreshCw, Loader2, X, Check, Shrink, Eraser, Zap, ListTodo, FilePen, Sparkles, FastForward, ShieldAlert, Ban, ArrowUp, Clock, Copy, ChevronDown, FolderSync, Cat, File as FileIcon, HelpCircle } from "lucide-react";
 import DirPicker from "./DirPicker";
 import type { UIBlock } from "./types";
 
@@ -66,7 +66,7 @@ const ctxWinHints = new Set<string>(); // env 清单里带 [1m] 的模型归一�
 const rememberCtxWin = (mu: any) => {
   try {
     for (const [k, v] of Object.entries(mu ?? {}))
-      if ((v as any)?.contextWindow) localStorage.setItem(`qweb.ctxwin.${normModel(k)}`, String(v.contextWindow));
+      if ((v as any)?.contextWindow) localStorage.setItem(`qweb.ctxwin.${normModel(k)}`, String((v as any).contextWindow));
   } catch {}
 };
 const ctxWindowOf = (model: string): number => {
@@ -113,7 +113,7 @@ function ccReducer(s: State, a: Action): State {
       return { ...s, blocks: s.blocks.map((b) => b.k === "form" && b.rid === a.rid && !b.done
         ? { ...b, done: { summary: a.summary, answers: a.answers } } : b) };
     case "note": return { ...s, blocks: [...s.blocks, { bid: nextBid(), k: "note", text: a.text }] };
-    case "clear": return { ...s, blocks: [], partial: null };
+    case "clear": return { ...s, blocks: [] };
     case "cc": {
       const ev = a.ev;
       const blocks = [...s.blocks];
@@ -155,7 +155,7 @@ function ccReducer(s: State, a: Action): State {
           if (r.tool_name === "AskUserQuestion" && Array.isArray(r.input?.questions) && r.input.questions.length) {
             const tuid = String(r.tool_use_id ?? "");
             const i = blocks.findIndex((b: any) => b.k === "form" && b.tuid === tuid);
-            if (i >= 0) blocks[i] = { ...blocks[i], rid: String(ev.request_id ?? "") };
+            if (i >= 0) blocks[i] = { ...(blocks[i] as any), rid: String(ev.request_id ?? "") };
             else blocks.push({
               bid: nextBid(),
               k: "form", rid: String(ev.request_id ?? ""), tuid,
@@ -262,7 +262,7 @@ function ccReducer(s: State, a: Action): State {
             // 权限卡片跟着落定（deny 的 tool_result 是 is_error + 拒绝文案）
             const ai = blocks.findIndex((b: any) => b.k === "ask" && b.tuid === c.tool_use_id && !b.done);
             if (ai >= 0)
-              blocks[ai] = { ...blocks[ai], done: c.is_error ? "deny" : "allow" };
+              blocks[ai] = { ...(blocks[ai] as any), done: c.is_error ? "deny" : "allow" };
             // 表单块同理（重连/回放时本地未作答）：从官方 tool_result 文本尽力还原
             // 各题答案（"题"="值" 逐对解析；值含逗号且各段均命中该题选项 → 多选数组，
             // 否则整串=自定义文本），供 done 卡的选项高亮
@@ -294,7 +294,7 @@ function ccReducer(s: State, a: Action): State {
         // env 清单里）——按 1M 记忆该模型，ctx% 不再虚超 100%
         const mName = normModel(ev.model ?? s.model);
         try {
-          if (usedAbs > ctxWindowOf(mName, null, null) * 1.05)
+          if (usedAbs > ctxWindowOf(mName) * 1.05)
             localStorage.setItem(`qweb.ctxwin.${mName}`, "1000000");
         } catch {}
         // 窗口推定（modelUsage→localStorage→hints→默认）移到渲染处：见 ctxPct 派生注释
@@ -325,7 +325,7 @@ function ThinkBlock({ b }: { b: Extract<UIBlock, { k: "think" }> }) {
   }, [zoom]);
   const over = b.text.length > THINK_INLINE_MAX;
   return (
-    <Reasoning open={open} onOpenChange={setOpen} hasContent={!!b.text}
+    <Reasoning open={open} onOpenChange={setOpen}
       className="w-full text-xs">
       <ReasoningTrigger />
       {/* ReasoningContent 只收 string（Streamdown markdown）——按钮放折叠区外，展开且超长时才出现 */}
@@ -715,12 +715,12 @@ function BlockView({ b, canAct, onRespond, onFormRespond, onFormSkip }: {
 }
 
 export default function ChatPanel({
-  session, historyEvents, histGroups, onResume, onNewSession, onOpenHistory, onRefreshHistory, onToggleHistory,
+  session, historyEvents, histGroups, onResume, onNewSession, onOpenHistory, onRefreshHistory,
   root, models, home, treeOpen, onToggleTree, onSwitchRoot, chatInset = 0,
   initialEvents, pendingText, initModel,
   engines, enginePref, onEnginePref,
 }: {
-  session?: { id: string; cwd: string; engine?: string | null };
+  session?: { id: string; cwd: string; claudeSid?: string | null; engine?: string | null };
   historyEvents?: { id: string; cwd: string; events: any[]; resumeSid?: string | null };
   initialEvents?: any[];
   pendingText?: string;
@@ -730,7 +730,6 @@ export default function ChatPanel({
   onNewSession?: () => void;
   onOpenHistory?: (id: string, cwd: string) => void;
   onRefreshHistory?: () => void;
-  onToggleHistory?: () => void;
   root?: string;
   models?: string[];
   engines?: { id: string; label: string }[]; // 可用引擎（后端 /api/env；qtom 配置 --dsweb 后出现）
@@ -799,7 +798,7 @@ export default function ChatPanel({
   // 算好存住会在早到的 result 上拿 200k 兜底算错（1M 会话虚高 5 倍）且永不更新。
   // 官方口径（statusline 文档）：分子三项之和不含 output，分母完整 context window
   const ctxPct = s.ctxAbs == null ? null
-    : Math.min(100, Math.round((s.ctxAbs / ctxWindowOf(s.model || "", null, null)) * 100));
+    : Math.min(100, Math.round((s.ctxAbs / ctxWindowOf(s.model || "")) * 100));
 
   // ---- 滚动三件套：尾部优先渲染 / 上翻加载更早 / 后台跟随 ----
   // 1) 先只渲染最近 N 条（历史回放/重连大缓冲挂载即落底，无整屏扫过）
@@ -927,25 +926,9 @@ export default function ChatPanel({
   })());
   const histNavIdx = useRef(-1);
   const histDraft = useRef("");
-  // 待发图片（data URL，粘贴/拖拽/选择三种入口；后端解析 data: 前缀转 base64 块）
+  // 待发图片（data URL；后端解析 data: 前缀转 base64 块）。本地添加入口已下线
+  // （附件按钮移除，上传走目录树 / @ 引用），仅保留 WS images 协议位以兼容后端
   const [imgs, setImgs] = useState<{ url: string; name: string }[]>([]);
-  const fileRef = useRef<HTMLInputElement>(null);
-  const addFiles = useCallback((files: Iterable<File>) => {
-    if (isQtom) { // qtom 无图片输入（网页版 DeepSeek 文本协议桥）
-      dispatch({ t: "note", text: "qtom 引擎暂不支持图片附件" });
-      return;
-    }
-    for (const f of files) {
-      if (!f.type.startsWith("image/")) continue;
-      if (f.size > 4 * 1024 * 1024) {
-        dispatch({ t: "note", text: `图片 ${f.name} 超 4MB，已跳过` });
-        continue;
-      }
-      const r = new FileReader();
-      r.onload = () => setImgs((p) => [...p, { url: String(r.result), name: f.name }]);
-      r.readAsDataURL(f);
-    }
-  }, [isQtom]);
   // ctrl 请求在途中（set_model 需后端连代理校验，数秒）：chip 上转圈，control_response 到达即清
   const [ctrlPend, setCtrlPend] = useState<null | "mode" | "model">(null);
   useEffect(() => {
@@ -1209,7 +1192,8 @@ export default function ChatPanel({
   };
 
   useEffect(() => {
-    const h = (e: KeyboardEvent) => {
+    // globalThis 显式取 DOM 版（文件顶部 import 了 React 的 KeyboardEvent）
+    const h = (e: globalThis.KeyboardEvent) => {
       if (e.key !== "Escape") return;
       // 联想浮层（斜杠 / @）开着时 ESC 只关浮层（textarea 的 onKeyDown 负责），不打断会话
       if (slashOpenRef.current || atOpenRef.current) return;
@@ -1604,7 +1588,7 @@ export default function ChatPanel({
           )}
           {/* 图片上传入口已移除（2026-11-08：目录树支持上传，引用文件用 @ 联想）；
               imgs 状态与 WS images 通道保留——无入口即恒空，协议面不动 */}
-          <PromptInput value={input} onSubmit={send} className="bg-card">
+          <PromptInput onSubmit={send} className="bg-card">
             <PromptInputBody>
               <PromptInputTextarea
                 /* 受控接线（ai-elements 升级后 PromptInput 不再收 onValueChange——曾被
@@ -1665,8 +1649,8 @@ export default function ChatPanel({
             </PromptInputBody>
             <PromptInputFooter>
               <PromptInputTools>
-                {/* 图片附件按钮已移除（上传走目录树；@ 联想引用文件）——imgs/fileRef/addFiles
-                    留在上方仅供既有 WS images 协议兜底，无 UI 入口 */}
+                {/* 图片附件按钮已移除（上传走目录树；@ 联想引用文件）——上方 imgs 仅存
+                    WS images 协议位，无 UI 添加入口 */}
                 {/* ctx 占用徽章：中性底，仅数字按阈值着色（纯展示；压缩/清除走上方工具条）。
                     常驻不隐藏：无数据（首轮 result 未到）按 0% 展示并占住位置，避免出现时 footer 抖动 */}
                 <span
