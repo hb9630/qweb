@@ -18,6 +18,16 @@ mod common;
 use std::sync::Arc;
 
 fn main() {
+    // WebView2 默认遵循系统代理：bypass 列表（<local> 等）只豁免无点主机名、不豁免
+    // IP 字面量——系统代理开启时对 http://127.0.0.1:<port> 的全部请求（页面/JS/API/WS）
+    // 被代理劫持（远端连不回本机 → 秒级超时，"桌面版比网页版慢"即来于此）。
+    // 桌面窗口只加载进程内本机服务，直接禁代理一劳永逸（须在 WebView2 创建前设好）。
+    // 追加式：外部注入的同名 env（如 --remote-debugging-port 诊断）不覆盖
+    let extra = std::env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS").unwrap_or_default();
+    std::env::set_var(
+        "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
+        format!("{extra} --proxy-server=direct:// --proxy-bypass-list=*"),
+    );
     let mut cfg = qweb_core::config::Config::from_env();
     let cli = common::apply_cli(&mut cfg);
     // 桌面版默认本机随机空闲口（免端口冲突/免暴露局域网）；显式配置端口 = 用户想固定访问

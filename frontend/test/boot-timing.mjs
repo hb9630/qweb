@@ -11,7 +11,7 @@ pg.on("response", (r) => {
   if (!marks[key]) marks[key] = Date.now() - t0; // 首次完成时刻
 });
 pg.on("console", (m) => { if (m.text().startsWith("[boot]")) marks[m.text().slice(6)] = Date.now() - t0; });
-await pg.goto("http://127.0.0.1:18090/");
+await pg.goto("http://127.0.0.1:57891/");
 // 消息区首个内容（用户气泡或助手文本）
 await pg.locator(".group\/msg").first().waitFor({ timeout: 30000 }).catch(() => {});
 marks["首条消息可见"] = Date.now() - t0;

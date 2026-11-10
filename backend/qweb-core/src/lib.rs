@@ -43,6 +43,10 @@ pub struct App {
     pub sessions: SessionMap,
     pub ctxwin: Arc<CtxWin>,
     pub http: Http,
+    /// keeperd 可达缓存（后台周期探测）：env 接口读它——同步探测（1.5s 超时，
+    /// keeperd 缺席时连接被静默丢弃而非立即拒绝）曾把 /api/env 拖到 1.5s+，
+    /// 是首开树区转圈的大头（root 智能默认要等 env）
+    pub keeperd_alive: std::sync::atomic::AtomicBool,
 }
 
 pub fn router(app: Arc<App>) -> axum::Router {
@@ -206,7 +210,26 @@ async fn dispatch(State(app): State<Arc<App>>, req: Request) -> Response<Body> {
 }
 
 /// 后台任务：空闲会话回收（无 WS 客户端且 20 分钟无事件 → kill，防进程堆积）
+/// + keeperd 可达周期探测（结果入缓存供 /api/env 读，接口本身不等网络）
 pub fn spawn_background(app: Arc<App>) {
+    {
+        let app = app.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(30));
+            loop {
+                tick.tick().await;
+                let ok = app
+                    .http
+                    .probe
+                    .get(format!("{}/healthz", app.cfg.keeperd_url))
+                    .send()
+                    .await
+                    .map(|r| r.status().is_success())
+                    .unwrap_or(false);
+                app.keeperd_alive.store(ok, std::sync::atomic::Ordering::Relaxed);
+            }
+        });
+    }
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
         loop {

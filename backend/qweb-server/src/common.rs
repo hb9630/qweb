@@ -111,6 +111,7 @@ pub fn build_app(cfg: &qweb_core::config::Config) -> Arc<qweb_core::App> {
         fs_hub: qweb_core::fswatch::FsHub::new(),
         sessions: Default::default(),
         ctxwin: std::sync::Arc::new(qweb_core::ctxwin::CtxWin::new(cfg.ctxwin_path.clone())),
+        keeperd_alive: std::sync::atomic::AtomicBool::new(false),
         http: qweb_core::Http {
             probe: reqwest_probe_client(),
             proxy: reqwest::Client::new(),

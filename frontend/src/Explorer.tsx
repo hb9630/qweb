@@ -165,12 +165,34 @@ export default function Explorer({
   const persistOpen = (nodes: TreeNode[]) => {
     try { localStorage.setItem("qweb.expanded", JSON.stringify(collectOpen(nodes))); } catch {}
   };
-  // 恢复：saved 集合里的目录递归展开（父层必在集合内——展开深层前必先展开父层）
+  // 恢复（旧递归式，reloadDir 单目录刷新用）：saved 集合里的目录递归展开
+  // （父层必在集合内——展开深层前必先展开父层）
   const restoreOpen = async (nodes: TreeNode[], saved: Set<string>): Promise<TreeNode[]> =>
     Promise.all(nodes.map(async (n) => {
       if (!n.dir || !saved.has(n.path)) return n;
       return { ...n, open: true, loading: false, children: await restoreOpen(await listDir(n.path), saved) };
     }));
+  // 展开一层（同层并发）：saved 里还没展开的目录拉子级；无变化时原样返回（引用相等
+  // = 恢复完毕的信号）。启动恢复逐层调用它——每层完成即 setTree，根层不等深层
+  const expandOneLevel = async (nodes: TreeNode[], saved: Set<string>): Promise<TreeNode[]> => {
+    let changed = false;
+    const next = await Promise.all(nodes.map(async (n) => {
+      if (!n.dir) return n;
+      const drill = async () => {
+        if (!n.open || !n.children) return n;
+        const c = await expandOneLevel(n.children, saved);
+        return c === n.children ? n : (changed = true, { ...n, children: c });
+      };
+      if (!saved.has(n.path)) return drill();
+      if (!n.open) {
+        const children = await listDir(n.path);
+        changed = true;
+        return { ...n, open: true, loading: false, children };
+      }
+      return drill();
+    }));
+    return changed ? next : nodes;
+  };
 
   useEffect(() => {
     let saved: Set<string>;
@@ -184,10 +206,18 @@ export default function Explorer({
     setRootLoading(true);
     (async () => {
       let t = await listDir(root);
-      if (saved.size) t = await restoreOpen(t, saved);
       if (dead) return;
+      // 根层立即上屏（此前要等全部记忆展开层恢复完才首渲——展开链深/含大目录
+      // 如 target 时树区秒级空白，消息区早就出来了）；随后逐层恢复逐层更新
       setTree(t);
       setRootLoading(false);
+      for (let i = 0; saved.size && i < 64; i++) {
+        const nx = await expandOneLevel(t, saved);
+        if (nx === t) break;
+        t = nx;
+        if (dead) return;
+        setTree(t);
+      }
       // 选中状态恢复（路径可能在未展开层，先全量恢复；展开到那层自然显示选中样式）
       if (savedSel?.paths?.length) {
         setSel(new Set(savedSel.paths));

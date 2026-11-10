@@ -8,12 +8,10 @@ use axum::http::{Method, Response, StatusCode};
 use serde_json::json;
 
 /// GET /api/env —— 环境报告 + 模型清单（唯一一个 /api/env，字段两方共用）
+/// keeperd 读后台周期探测缓存——同步探测 1.5s 超时曾把本接口拖到 1.5s+（首开树转圈的大头）
 pub async fn env(app: &App) -> Response<Body> {
     let container = std::path::Path::new("/.dockerenv").exists();
-    let keeperd = match app.http.probe.get(format!("{}/healthz", app.cfg.keeperd_url)).send().await {
-        Ok(r) => r.status().is_success(),
-        Err(_) => false,
-    };
+    let keeperd = app.keeperd_alive.load(std::sync::atomic::Ordering::Relaxed);
     // 模型清单：别名恒有效 + settings 推导值 + 兜底 default（Node Set 插入序）
     let mut models: Vec<String> = vec!["sonnet".into(), "opus".into(), "haiku".into()];
     if let Ok(st) = std::fs::read_to_string(format!("{}/.claude/settings.json", app.cfg.child_home)) {
