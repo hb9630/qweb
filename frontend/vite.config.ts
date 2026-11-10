@@ -12,14 +12,18 @@ export default defineConfig({
   define: { __BUILD_TAG__: JSON.stringify(BUILD_TAG) },
   plugins: [react()],
   resolve: {
-    alias: {
-      "@": fileURLToPath(new URL("./src", import.meta.url)),
+    alias: [
+      { find: "@", replacement: fileURLToPath(new URL("./src", import.meta.url)) },
+      // 裸 "shiki" → 精简门面（regex 精确匹配：shiki/core 等子路径不受影响）。
+      // @streamdown/code 与 code-block 从全量 shiki 引 bundledLanguages，300+ 语言
+      // 语法全部进产物；门面只登记常用语言（见 src/lib/shiki-slim.ts）
+      { find: /^shiki$/, replacement: fileURLToPath(new URL("./src/lib/shiki-slim.ts", import.meta.url)) },
       // npmmirror 同步的 mermaid 链损坏（parser 缺 .mjs、cytoscape 截断）；
       // 聊天场景不渲染 mermaid 图，统一 stub（打包期替换，避免运行时裸说明符报错）
-      "mermaid": fileURLToPath(new URL("./src/stub-empty.js", import.meta.url)),
-      "@mermaid-js/parser": fileURLToPath(new URL("./src/stub-empty.js", import.meta.url)),
-      "cytoscape": fileURLToPath(new URL("./src/stub-empty.js", import.meta.url)),
-    },
+      { find: "mermaid", replacement: fileURLToPath(new URL("./src/stub-empty.js", import.meta.url)) },
+      { find: "@mermaid-js/parser", replacement: fileURLToPath(new URL("./src/stub-empty.js", import.meta.url)) },
+      { find: "cytoscape", replacement: fileURLToPath(new URL("./src/stub-empty.js", import.meta.url)) },
+    ],
   },
   server: {
     // 开发调试：npm run dev 起 Vite（HMR 秒级热更）——改前端不用重新 build、不用动后端进程；

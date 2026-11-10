@@ -3,13 +3,14 @@
 // 目录树浮层从标题栏下方垂到底（左缘贴边），编辑器浮层紧贴其右——两者各自头部有 X
 // 独立关闭（相当于把原三栏的树/编辑器搬到标题栏下面浮起）；编辑器最后一个 tab
 // 关闭仍自动收编辑器（Editor 既有语义）。手机/桌面同一结构（浮层宽 clamp 到 vw）。
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { API, hashSid, setHashSid } from "./lib/api";
 import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import Explorer from "./Explorer";
-import Editor from "./Editor";
+// 编辑器（CodeMirror 全家 ~1.1M）懒加载：浮层默认收起，首次点开文件才拉 chunk
+const Editor = lazy(() => import("./Editor"));
 import ChatPanel from "./ChatPanel";
 
 interface LiveSession { id: string; cwd: string; claudeSid?: string | null; engine?: string | null }
@@ -58,6 +59,10 @@ export default function App() {
   const cachedHome = (() => { try { return localStorage.getItem("qweb.home"); } catch { return null; } })();
   const userRoot = useRef(!!savedRoot);
   const [root, setRoot] = useState<string>(savedRoot || cachedHome || "");
+  // 工作目录是否已定：无用户设定（savedRoot）时启动要先问 /api/env + /api/history
+  // （"最近有会话的目录"智能默认）——定位落定前树区只转圈，不再先渲染 HOME 再切
+  // （home 闪现 = 加载两遍目录 + 一次整树重挂，切过去的延迟感即来于此）
+  const [rootReady, setRootReady] = useState(!!savedRoot);
   // 打开文件请求：seq 递增保证同路径重复请求也触发（双击=钉住已开的预览）
   const [openReq, setOpenReq] = useState<{ path: string; pinned: boolean; seq: number } | null>(null);
   // 文件移动/重命名通知(树 → 编辑器):tabs 路径跟随,不再标"已删除"
@@ -163,17 +168,23 @@ export default function App() {
           setHome(d.home);
           try { localStorage.setItem("qweb.home", d.home); } catch {} // 下次打开零等待兜底
           // 从未人工设定过：优先"最近有会话的目录"（全新环境/桌面 WebView 首开零记忆时
-          // 直接落回用户实际工作的地方，历史浮层/目录树才对得上）；无任何历史才用 home
+          // 直接落回用户实际工作的地方，历史浮层/目录树才对得上）；无任何历史才用 home。
+          // 一次落定（不再先 setRoot(home) 再切——那会让树先加载一遍 HOME 再整树重挂）
           if (!userRoot.current) {
-            setRoot(d.home);
+            const settle = (p: string) => {
+              if (userRoot.current) return; // 期间用户已手动设目录，以手动为准
+              setRoot(p);
+              setRootReady(true);
+            };
             fetch(`${API}/history`).then((r) => r.json())
               .then((hs: any[]) => {
-                if (!Array.isArray(hs) || !hs.length || userRoot.current) return;
-                const best = hs.flatMap((g) => (g.sessions ?? []).map((s: any) => ({ cwd: g.cwd, at: s.startedAt ?? 0 })))
-                  .sort((a, b) => b.at - a.at)[0];
-                if (best?.cwd) setRoot(best.cwd);
+                const best = Array.isArray(hs)
+                  ? hs.flatMap((g) => (g.sessions ?? []).map((s: any) => ({ cwd: g.cwd, at: s.startedAt ?? 0 })))
+                      .sort((a, b) => b.at - a.at)[0]
+                  : null;
+                settle(best?.cwd || d.home);
               })
-              .catch(() => {});
+              .catch(() => settle(d.home));
           }
         }
         if (Array.isArray(d.models)) setEnvModels(d.models.map(String));
@@ -330,6 +341,7 @@ export default function App() {
   const setWorkspace = (path: string) => {
     if (path === root) return;
     setRoot(path);
+    setRootReady(true);
     userRoot.current = true;
     pushRecent(path);
     try { localStorage.setItem("qweb.root", path); } catch {}
@@ -350,7 +362,6 @@ export default function App() {
       const d = await r.json();
       if (!r.ok) return;
       // 历史 id 即官方 session_id（transcript 文件名），直接用于 --resume
-      setWsNotice(null);
       setLive(null);
       setHistEv({ id, cwd, events: d.events, resumeSid: id, model: d.model ?? null });
     } catch {}
@@ -425,8 +436,15 @@ export default function App() {
           className={cn("absolute bottom-0 left-0 top-8 z-20 flex min-w-0 flex-col border-b border-border/70 bg-card",
             !showEditor && "border-r")}
           style={{ width: treeW }}>
-          <Explorer root={root || home || "/"} home={home} onOpenFile={openFile} activeFile={openReq?.path ?? null} onMoved={onMoved}
-            onClose={() => setShowTree(false)} />
+          {rootReady ? (
+            <Explorer root={root || home || "/"} home={home} onOpenFile={openFile} activeFile={openReq?.path ?? null} onMoved={onMoved}
+              onClose={() => setShowTree(false)} />
+          ) : (
+            // 工作目录定位中（/api/env + /api/history 决定智能默认的窗口期）：树区转圈
+            <div className="flex flex-1 items-center justify-center gap-2 px-3 py-8 text-[0.625rem] text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" /> 正在定位工作目录…
+            </div>
+          )}
         </div>
       )}
       {/* 树右缘把手：树开着就在（编辑器在场时压在树|编辑器缝上，仍可调树宽） */}
@@ -437,12 +455,14 @@ export default function App() {
         </div>
       )}
 
-      {/* 编辑器浮层（紧贴树右；border-l 即树/编辑器之间唯一的缝） */}
+      {/* 编辑器浮层（紧贴树右；border-l 即树/编辑器之间唯一的缝）；chunk 首开时短暂转圈 */}
       {showEditor && (
         <div
           className="absolute bottom-0 top-8 z-20 flex min-w-0 flex-col border-b border-r border-l border-border/70 bg-card"
           style={{ left: edLeft, width: edW }}>
-          <Editor openReq={openReq} movedReq={movedReq} onClose={() => setShowEditor(false)} />
+          <Suspense fallback={<div className="flex flex-1 items-center justify-center gap-2 text-xs text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> 编辑器加载中…</div>}>
+            <Editor openReq={openReq} movedReq={movedReq} onClose={() => setShowEditor(false)} />
+          </Suspense>
         </div>
       )}
       {showEditor && (

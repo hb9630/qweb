@@ -6,11 +6,10 @@ import { API } from "./lib/api";
 import { FileGlyph } from "./lib/fileglyph";
 import { useFsEvent, watchDir } from "@/lib/fswatch";
 import {
-  ChevronRight, ChevronDown, ChevronUp, Loader2, FolderOpen, Folder, File as FileIcon, RefreshCw,
+  ChevronRight, ChevronDown, Loader2, FolderOpen, Folder, File as FileIcon, RefreshCw,
   FilePlus2, FolderPlus, Upload, Download, Pencil, Trash2, Scissors, Copy, ClipboardCopy, ClipboardPaste, X, Eye, EyeOff,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { kdEnv } from "./lib/keeperd";
 import { ConfirmDialog } from "@/components/ui/confirm";
 import { toast } from "sonner";
 
@@ -30,7 +29,6 @@ function ErrToast({ msg, clear }: { msg: string; clear: () => void }) {
   return null;
 }
 
-const TEXT_EXT = /\.(txt|md|json|ya?ml|toml|ini|conf|log|py|js|ts|tsx|jsx|go|rs|java|c|h|cpp|sh|bash|html|css|xml|csv|sql|env|gitignore|lock)$/i;
 const parentOf = (p: string) => p.split("/").slice(0, -1).join("/") || "/";
 const fmtSize = (n?: number) =>
   n == null ? "" : n >= 1048576 ? (n / 1048576).toFixed(1) + "M" : n >= 1024 ? Math.round(n / 1024) + "K" : n + "B";
@@ -104,10 +102,10 @@ function MI({ icon: Icon, label, onClick, danger, disabled, close }: {
 }
 
 export default function Explorer({
-  root, home, onOpenFile, activeFile, onClose, onMoved,
+  root, onOpenFile, activeFile, onClose, onMoved,
 }: {
   root: string; // 工作目录 = 树根（树锁死其内，换根走标题栏）
-  home: string; // 环境 HOME（/api/env 下发；不写死 /root，Windows 也能跑）
+  home: string; // 环境 HOME（/api/env 下发；不写死 /root，Windows 也能跑；当前未消费，接口保留）
   onOpenFile: (path: string, pinned?: boolean) => void;
   activeFile: string | null;
   onClose?: () => void; // 树头部 X：独立收起目录树浮层（与编辑器互不影响）
@@ -115,9 +113,9 @@ export default function Explorer({
 }) {
   const [tree, setTree] = useState<TreeNode[]>([]);
   const [err, setErr] = useState("");
-  // 管理终端能力分级:容器内=仅本容器管理;宿主机+keeperd=可创建容器
-  const [env, setEnv] = useState<{ container: boolean; keeperd: boolean }>({ container: false, keeperd: false });
-  useEffect(() => { kdEnv().then(setEnv).catch(() => {}); }, []);
+  // 根目录加载中（root 变化即置位）：树体让位给转圈——切工作目录第一时间反馈，
+  // 不残留旧目录内容，也不把加载窗口误显示成"空目录"
+  const [rootLoading, setRootLoading] = useState(true);
   // 隐藏文件开关（localStorage 记忆；listDir 依赖它 → 切换即整树刷新）
   const [showHidden, setShowHidden] = useState(() => {
     try { return localStorage.getItem("qweb.hidden") === "1"; } catch { return false; }
@@ -179,10 +177,17 @@ export default function Explorer({
     let savedSel: { paths?: string[]; anchor?: string | null } | null = null;
     try { saved = new Set(JSON.parse(localStorage.getItem("qweb.expanded") || "[]")); } catch { saved = new Set(); }
     try { savedSel = JSON.parse(localStorage.getItem("qweb.sel") || "null"); } catch {}
+    // 立即清旧树 + 转圈：换根的反馈不等网络；dead 防 root 快速连切时晚到的旧结果覆盖新树
+    let dead = false;
+    setTree([]);
+    setSel(new Set());
+    setRootLoading(true);
     (async () => {
       let t = await listDir(root);
       if (saved.size) t = await restoreOpen(t, saved);
+      if (dead) return;
       setTree(t);
+      setRootLoading(false);
       // 选中状态恢复（路径可能在未展开层，先全量恢复；展开到那层自然显示选中样式）
       if (savedSel?.paths?.length) {
         setSel(new Set(savedSel.paths));
@@ -191,6 +196,7 @@ export default function Explorer({
         treeBoxRef.current?.focus();
       }
     })();
+    return () => { dead = true; };
   }, [root, listDir]);
 
   // 选中持久化：sel 变化即写（anchor 一并记录，恢复时"当前项"深底白字不丢）
@@ -705,25 +711,33 @@ export default function Explorer({
           window.addEventListener("mouseup", up);
         }}
       >
-        {edit && edit.dir === root && edit.kind !== "rename" && (
-          <EditRow icon={editIcon(edit.kind)} initial="" onOk={submitEdit} onCancel={() => setEdit(null)} />
+        {rootLoading ? (
+          <div className="flex items-center justify-center gap-2 py-8 text-[0.625rem] text-muted-foreground/70">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" /> 正在加载目录…
+          </div>
+        ) : (
+          <>
+            {edit && edit.dir === root && edit.kind !== "rename" && (
+              <EditRow icon={editIcon(edit.kind)} initial="" onOk={submitEdit} onCancel={() => setEdit(null)} />
+            )}
+            {tree.map((n) => renderNode(n, 0))}
+            {/* 树下方空白:drop=当前工作目录,悬停整块高亮 */}
+            <div
+              className="min-h-40 flex-1"
+              onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setBlankDrag(true); }}
+              onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setBlankDrag(false); }}
+              onDrop={(e) => {
+                e.preventDefault(); e.stopPropagation(); setBlankDrag(false);
+                const kp = e.dataTransfer.getData("kp");
+                if (kp) {
+                  const paths: string[] = JSON.parse(kp).filter((p: string) => p !== root);
+                  if (paths.length) moveInto(paths, root);
+                } else doUpload(root, e.dataTransfer.files);
+              }}
+            />
+            {!tree.length && !err && <p className="p-3 text-center text-[0.625rem] text-muted-foreground/70">空目录</p>}
+          </>
         )}
-        {tree.map((n) => renderNode(n, 0))}
-        {/* 树下方空白:drop=当前工作目录,悬停整块高亮 */}
-        <div
-          className="min-h-40 flex-1"
-          onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setBlankDrag(true); }}
-          onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setBlankDrag(false); }}
-          onDrop={(e) => {
-            e.preventDefault(); e.stopPropagation(); setBlankDrag(false);
-            const kp = e.dataTransfer.getData("kp");
-            if (kp) {
-              const paths: string[] = JSON.parse(kp).filter((p: string) => p !== root);
-              if (paths.length) moveInto(paths, root);
-            } else doUpload(root, e.dataTransfer.files);
-          }}
-        />
-        {!tree.length && !err && <p className="p-3 text-center text-[0.625rem] text-muted-foreground/70">空目录</p>}
         {/* 框选虚线框（client 坐标 → 容器相对坐标） */}
         {marq && treeBoxRef.current && (() => {
           const rc = treeBoxRef.current.getBoundingClientRect();

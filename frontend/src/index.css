@@ -68,3 +68,9 @@ html { font-size: 18px; } /* 全局字号基准（默认 18px，Ctrl+=/- 可调�
 
 /* tailwind 3.4 无此工具类（v4 才有）——手写：输入框随内容自动长高（配合 max-h 上限） */
 .field-sizing-content { field-sizing: content; }
+
+/* Thinking… 文字流光（shimmer.tsx 用，替代 motion 库的 backgroundPosition 循环） */
+@keyframes shimmer {
+  from { background-position: 100% center; }
+  to { background-position: 0% center; }
+}
