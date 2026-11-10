@@ -19,8 +19,10 @@ export function sameDir(a?: string, b?: string): boolean {
 }
 
 // 显示层 OS 分隔符：fs API/选择器产出的路径统一正斜杠（键、sameDir 比较、API 调用
-// 一律保持正斜杠不动），仅渲染时转本地形态——Windows 用户看 C:\a\b（资源管理器
-// 同款），POSIX 本就是 / 原样返回。面包屑段间分隔符用 pathSep()。
-const IS_WIN = typeof navigator !== "undefined" && /Windows/i.test(navigator.userAgent);
-export const dispPath = (p: string) => (IS_WIN ? p.replace(/\//g, "\\") : p);
-export const pathSep = () => (IS_WIN ? "\\" : "/");
+// 一律保持正斜杠不动），仅渲染时转本地形态——Windows 路径（盘符开头）显示 C:\a\b
+// （资源管理器同款），POSIX 原样。判定按路径自身形态而非浏览器 UA：远程访问
+// （Windows 浏览器连 Linux 服务器）时按 UA 会把 POSIX 路径错转成 \home\…。
+// 面包屑段间分隔符用 pathSep(该段累积路径)。
+export const isWinPath = (p: string) => /^[A-Za-z]:[\\/]/.test(p);
+export const dispPath = (p: string) => (isWinPath(p) ? p.replace(/\//g, "\\") : p);
+export const pathSep = (p?: string) => (p && isWinPath(p) ? "\\" : "/");

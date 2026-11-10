@@ -405,6 +405,11 @@ impl Session {
             "message": { "role": "user", "content": content },
         });
         self.write_stdin(&msg).await;
+        // 回显入 buf + 广播：CLI 对 stdin 用户消息不在 stdout 流上回显事件（busy 中
+        // 插话更是只进 api-request-blob 不落盘 user 行），多 tab / 断线重连（pre 帧
+        // buf 补齐）都会丢这条消息。发送方本地已 dispatch，前端 reducer 的
+        // "相邻同文本 user 块去重"防双条
+        self.on_event(msg);
     }
 
     /// 审批回包。wire 格式（CLI 2.1.212 逐字实测）：request_id 嵌在 response 内；

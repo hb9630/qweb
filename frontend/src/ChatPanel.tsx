@@ -12,7 +12,7 @@ import {
   PromptInput, PromptInputBody, PromptInputTextarea,
   PromptInputFooter, PromptInputTools, PromptInputSubmit,
 } from "@/components/ai-elements/prompt-input";
-import { cn, dispPath } from "@/lib/utils";
+import { cn, dispPath, isWinPath } from "@/lib/utils";
 import { API, BASE, setHashSid } from "@/lib/api";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -765,11 +765,11 @@ export default function ChatPanel({
   const recents = (() => {
     try { return JSON.parse(localStorage.getItem("qweb.recents") || "[]") as string[]; } catch { return []; }
   })();
-  // cwd 显示：POSIX home 子树内 ~/ 相对；win（home 为盘符形态）直接绝对路径——用户不识 ~，
-  // 且按 OS 分隔符显示（fs API 正斜杠 → win 渲染成 \，dispPath；POSIX 原样）
+  // cwd 显示：POSIX home 子树内 ~/ 相对（win 盘符路径用户不识 ~，直接绝对）；
+  // 分隔符由 dispPath 按路径自身形态转（Windows 浏览器远程连 Linux 时不误转 \）
   const relPath = (p: string) =>
-    /^[A-Za-z]:\//.test(home || "") ? dispPath(p)
-      : home && p === home ? "~" : home && p.startsWith(home + "/") ? "~" + p.slice(home.length) : p;
+    isWinPath(home || "") ? dispPath(p)
+      : home && p === home ? "~" : home && p.startsWith(home + "/") ? "~" + p.slice(home.length) : dispPath(p);
   // 历史浮层：锚定按钮位置向上展开（记录按钮相对面板的坐标）
   const [view, setView] = useState<"chat" | "history">("chat");
   const [histPos, setHistPos] = useState<{ left: number; bottom: number } | null>(null);

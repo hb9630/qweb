@@ -267,6 +267,32 @@ pub fn replay_events(projects: &str, ctxwin: &CtxWin, sid: &str) -> Option<(Vec<
                     events.push(json!({ "type": "user", "message": { "role": "user", "content": c } }));
                 }
             }
+            // CLI 2.1.3xx：busy 中插话（mid-turn 注入）不落盘标准 user 行，文本只在
+            // api-request-blob 的 system 附件里——不还原的话刷新/历史回放会出现
+            // "模型答复了、但看不到用户那句追问"（live 时是前端本地 dispatch 上屏的）。
+            // blob 行天然落在对应 assistant 响应行之前，直接按序 push 即时序正确
+            Some("api-request-blob") => {
+                const HEAD: &str = "The user sent a new message while you were working:\n";
+                const TAIL: &str = "\n\nThis is how Claude Code surfaces messages the user sends mid-turn";
+                if ev.pointer("/message/role").and_then(|v| v.as_str()) == Some("system") {
+                    if let Some(Value::Array(arr)) = ev.pointer("/message/content") {
+                        for c in arr {
+                            let Some(t) = c.get("text").and_then(|v| v.as_str()) else { continue };
+                            let Some(body) = t.strip_prefix(HEAD) else { continue };
+                            let text = match body.find(TAIL) {
+                                Some(i) => &body[..i],
+                                None => body, // 措辞变化兜底：宁可多带说明文字，不丢消息
+                            };
+                            if !text.trim().is_empty() {
+                                events.push(json!({
+                                    "type": "user",
+                                    "message": { "role": "user", "content": [{ "type": "text", "text": text }] },
+                                }));
+                            }
+                        }
+                    }
+                }
+            }
             Some("result") => {
                 // usage 不取 result 行：中转把轮末 result 按整轮累计（单请求不可能超
                 // 窗口），分子以 assistant 行的单请求 usage 为准（官方 API 下两者一致）

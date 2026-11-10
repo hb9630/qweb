@@ -120,7 +120,7 @@ export default function DirPicker({ home, current, onPick, onClose }: {
                 i === crumbs.length - 1 ? "text-foreground" : "text-muted-foreground")}
               title={dispPath(path)}
               onClick={() => setBrowse(path)}>
-              {label}{i < crumbs.length - 1 && <span className="pl-0.5 opacity-40">{pathSep()}</span>}
+              {label}{i < crumbs.length - 1 && <span className="pl-0.5 opacity-40">{pathSep(path)}</span>}
             </button>
           ))}
         </div>
