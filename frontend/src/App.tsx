@@ -56,13 +56,16 @@ export default function App() {
   // env 下发的 HOME 缓存（qweb.home——首访后刷新零等待，无"未设定"窗口），仍未知则空，
   // 等 /api/env 下发 HOME 后由 env effect 设定
   const savedRoot = (() => { try { return localStorage.getItem("qweb.root"); } catch { return null; } })();
+  // 智能默认的上次结果（非人工设定）：刷新/二次打开树零等待立即扎根——否则每次
+  // 都当首开重跑"env+history 智能默认"，树区转圈明显慢于消息区（消息走活会话重连）
+  const lastRoot = (() => { try { return localStorage.getItem("qweb.lastRoot"); } catch { return null; } })();
   const cachedHome = (() => { try { return localStorage.getItem("qweb.home"); } catch { return null; } })();
   const userRoot = useRef(!!savedRoot);
-  const [root, setRoot] = useState<string>(savedRoot || cachedHome || "");
-  // 工作目录是否已定：无用户设定（savedRoot）时启动要先问 /api/env + /api/history
-  // （"最近有会话的目录"智能默认）——定位落定前树区只转圈，不再先渲染 HOME 再切
-  // （home 闪现 = 加载两遍目录 + 一次整树重挂，切过去的延迟感即来于此）
-  const [rootReady, setRootReady] = useState(!!savedRoot);
+  const [root, setRoot] = useState<string>(savedRoot || lastRoot || cachedHome || "");
+  // 工作目录是否已定：有 savedRoot（人工）或 lastRoot（上次智能默认）即就绪；
+  // 全新环境（两者皆无）才等 /api/env + /api/history 智能默认（树区转圈），
+  // lastRoot 先扎、后台校对目录变了再切（多数情况一致 = 零闪零等待）
+  const [rootReady, setRootReady] = useState(!!(savedRoot || lastRoot));
   // 打开文件请求：seq 递增保证同路径重复请求也触发（双击=钉住已开的预览）
   const [openReq, setOpenReq] = useState<{ path: string; pinned: boolean; seq: number } | null>(null);
   // 文件移动/重命名通知(树 → 编辑器):tabs 路径跟随,不再标"已删除"
@@ -172,19 +175,23 @@ export default function App() {
           if (!userRoot.current) {
             const settle = (p: string) => {
               if (userRoot.current) return; // 期间用户已手动设目录，以手动为准
+              try { localStorage.setItem("qweb.lastRoot", p); } catch {} // 下次打开零等待
               setRoot(p);
               setRootReady(true);
             };
             // 与 mount 期 refresh() 复用同一 in-flight 请求（history 后端要全量扫
             // projects 目录，是启动链路最慢一环——两处各拉一遍 = 树白多等一轮；
-            // refresh 已返回时这里 await 立即拿到，零额外等待）
+            // refresh 已返回时这里 await 立即拿到，零额外等待）。
+            // 挑选准则与 boot 自动恢复同款（最新会话里优先有标题的）——空会话
+            // （刚建的/纯探测）不代表用户工作地，纯按时间最新可能落到 temp 测试目录
             let best: { cwd: string } | null = null;
             try {
               const hs: any[] = await fetchHistoryOnce();
-              best = Array.isArray(hs)
-                ? hs.flatMap((g) => (g.sessions ?? []).map((s: any) => ({ cwd: g.cwd, at: s.startedAt ?? 0 })))
-                  .sort((a, b) => b.at - a.at)[0]
-                : null;
+              const all = Array.isArray(hs)
+                ? hs.flatMap((g) => (g.sessions ?? []).map((s: any) => ({ cwd: g.cwd, at: s.startedAt ?? 0, title: s.title ?? "" })))
+                  .sort((a, b) => b.at - a.at)
+                : [];
+              best = all.find((x) => x.title) ?? all[0] ?? null;
             } catch {}
             settle(best?.cwd || d.home);
           }
@@ -346,7 +353,9 @@ export default function App() {
     setRootReady(true);
     userRoot.current = true;
     pushRecent(path);
-    try { localStorage.setItem("qweb.root", path); } catch {}
+    // root=人工设定（优先级最高）；lastRoot 同步跟写——下次打开（无论走哪条记忆）
+    // 都直接落这个目录
+    try { localStorage.setItem("qweb.root", path); localStorage.setItem("qweb.lastRoot", path); } catch {}
     // "目录树是左上角选择的结果"：选定即展开浮层（此前关着也开）
     setShowTree(true);
     // 提示走 toast（短暂浮现自动消失）；旧会话消息在官方 transcript，可 resume 续聊
