@@ -5,7 +5,7 @@
 // 关闭仍自动收编辑器（Editor 既有语义）。手机/桌面同一结构（浮层宽 clamp 到 vw）。
 import { Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { API, hashSid, setHashSid } from "./lib/api";
+import { API, fetchHistoryOnce, hashSid, setHashSid } from "./lib/api";
 import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import Explorer from "./Explorer";
@@ -106,8 +106,7 @@ export default function App() {
 
   const refresh = useCallback(async () => {
     try {
-      const r = await fetch(`${API}/history`);
-      setGroups(await r.json());
+      setGroups(await fetchHistoryOnce());
     } catch {}
   }, []);
   useEffect(() => { refresh().then(() => setBooted(true)); }, [refresh]);
@@ -163,7 +162,7 @@ export default function App() {
   };
   useEffect(() => {
     fetch(`${API}/env`).then((r) => r.json())
-      .then((d: any) => {
+      .then(async (d: any) => {
         if (typeof d.home === "string" && d.home) {
           setHome(d.home);
           try { localStorage.setItem("qweb.home", d.home); } catch {} // 下次打开零等待兜底
@@ -176,15 +175,18 @@ export default function App() {
               setRoot(p);
               setRootReady(true);
             };
-            fetch(`${API}/history`).then((r) => r.json())
-              .then((hs: any[]) => {
-                const best = Array.isArray(hs)
-                  ? hs.flatMap((g) => (g.sessions ?? []).map((s: any) => ({ cwd: g.cwd, at: s.startedAt ?? 0 })))
-                      .sort((a, b) => b.at - a.at)[0]
-                  : null;
-                settle(best?.cwd || d.home);
-              })
-              .catch(() => settle(d.home));
+            // 与 mount 期 refresh() 复用同一 in-flight 请求（history 后端要全量扫
+            // projects 目录，是启动链路最慢一环——两处各拉一遍 = 树白多等一轮；
+            // refresh 已返回时这里 await 立即拿到，零额外等待）
+            let best: { cwd: string } | null = null;
+            try {
+              const hs: any[] = await fetchHistoryOnce();
+              best = Array.isArray(hs)
+                ? hs.flatMap((g) => (g.sessions ?? []).map((s: any) => ({ cwd: g.cwd, at: s.startedAt ?? 0 })))
+                  .sort((a, b) => b.at - a.at)[0]
+                : null;
+            } catch {}
+            settle(best?.cwd || d.home);
           }
         }
         if (Array.isArray(d.models)) setEnvModels(d.models.map(String));

@@ -13,3 +13,15 @@ export const setHashSid = (sid: string | null) => {
   if (sid === hashSid()) return;
   history.replaceState(null, "", sid ? `#s=${sid}` : location.pathname + location.search);
 };
+
+// /api/history 的 in-flight 复用：启动链路上多处要它（mount 期 refresh 拉分组、
+// root 智能默认挑"最近有会话的目录"）——后端要全量扫 projects 目录，是启动最慢一环，
+// 各拉一遍 = 树区转圈时间翻倍。同一窗口期共享一个在途 promise，5s 后过期真拉新。
+let histInflight: Promise<any> | null = null;
+export function fetchHistoryOnce(): Promise<any> {
+  if (!histInflight) {
+    histInflight = fetch(`${API}/history`).then((r) => r.json());
+    setTimeout(() => { histInflight = null; }, 5000);
+  }
+  return histInflight;
+}
