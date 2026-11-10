@@ -27,8 +27,9 @@ git clone https://github.com/hb9630/qweb && cd qweb
 
 **Windows 桌面版**（Tauri + WebView2，需 MSVC Build Tools + Rust `x86_64-pc-windows-msvc`）：
 
-```bash
-./build.sh desktop             # → ./qweb-desktop.exe，双击即开原生窗口
+```bat
+buildcc.bat --features desktop --bin qweb-desktop
+:: 包装 vcvars + cargo；产物：backend\target\release\qweb-desktop.exe，双击即开原生窗口
 ```
 
 关窗即退出并结束全部会话子进程。

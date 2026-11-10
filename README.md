@@ -27,8 +27,9 @@ git clone https://github.com/hb9630/qweb && cd qweb
 
 **Windows desktop app** (Tauri + WebView2, needs MSVC Build Tools + Rust `x86_64-pc-windows-msvc`):
 
-```bash
-./build.sh desktop             # → ./qweb-desktop.exe, double-click to launch
+```bat
+buildcc.bat --features desktop --bin qweb-desktop
+:: wraps vcvars + cargo; artifact: backend\target\release\qweb-desktop.exe — double-click to launch
 ```
 
 Closing the window exits and reaps all session child processes.
