@@ -12,7 +12,7 @@ import {
   PromptInput, PromptInputBody, PromptInputTextarea,
   PromptInputFooter, PromptInputTools, PromptInputSubmit,
 } from "@/components/ai-elements/prompt-input";
-import { cn } from "@/lib/utils";
+import { cn, dispPath } from "@/lib/utils";
 import { API, BASE, setHashSid } from "@/lib/api";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -762,9 +762,10 @@ export default function ChatPanel({
   const recents = (() => {
     try { return JSON.parse(localStorage.getItem("qweb.recents") || "[]") as string[]; } catch { return []; }
   })();
-  // cwd 显示：POSIX home 子树内 ~/ 相对；win（home 为盘符形态）直接绝对路径——用户不识 ~
+  // cwd 显示：POSIX home 子树内 ~/ 相对；win（home 为盘符形态）直接绝对路径——用户不识 ~，
+  // 且按 OS 分隔符显示（fs API 正斜杠 → win 渲染成 \，dispPath；POSIX 原样）
   const relPath = (p: string) =>
-    /^[A-Za-z]:\//.test(home || "") ? p
+    /^[A-Za-z]:\//.test(home || "") ? dispPath(p)
       : home && p === home ? "~" : home && p.startsWith(home + "/") ? "~" + p.slice(home.length) : p;
   // 历史浮层：锚定按钮位置向上展开（记录按钮相对面板的坐标）
   const [view, setView] = useState<"chat" | "history">("chat");
@@ -1256,7 +1257,7 @@ export default function ChatPanel({
           <button
             className={cn("flex min-w-0 max-w-[30vw] items-center gap-1 rounded px-1.5 py-0.5 font-mono text-[0.625rem] transition-colors hover:bg-accent",
               treeOpen ? "bg-accent text-accent-foreground" : "text-muted-foreground")}
-            title={`工作目录：${root || home || "—"}（点击${treeOpen ? "收起" : "展开"}目录树）`}
+            title={`工作目录：${dispPath(root || home || "—")}（点击${treeOpen ? "收起" : "展开"}目录树）`}
             onMouseDown={(e) => e.stopPropagation()}
             onClick={() => { setHdrMenu(null); onToggleTree?.(); }}>
             <FolderOpen className="h-3 w-3 shrink-0" />
@@ -1306,7 +1307,7 @@ export default function ChatPanel({
           {recents.length ? recents.map((p) => (
             <button key={p}
               className="flex w-full items-center gap-1.5 px-3 py-1.5 text-left hover:bg-accent/60"
-              title={p}
+              title={dispPath(p)}
               onClick={() => { setHdrMenu(null); if (p !== root) onSwitchRoot?.(p); }}>
               <FolderOpen className="h-3 w-3 shrink-0 opacity-60" />
               <span className="min-w-0 flex-1 truncate font-mono text-[0.6875rem]">{relPath(p)}</span>
@@ -1602,7 +1603,7 @@ export default function ChatPanel({
                   ? (s.alive
                     ? (isQtom
                       ? "给 qtom 发消息…（/ 命令联想 · Enter 发送 · ESC 打断）"
-                      : "给 Claude 发消息…（/ 命令 · @ 引用文件 · Enter 发送 · ESC 打断）")
+                      : "发消息…（/ 命令 · @ 引用文件 · Enter 发送 · ESC 打断）")
                     : "进程已退出，请新建会话")
                   : "历史会话 · 输入即恢复上下文继续对话（Enter 发送）"}
                 onKeyDown={(e) => {

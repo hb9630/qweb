@@ -10,3 +10,4 @@ target/
 backend/ccweb-server/gen/
 山水长卷.html
 *.png
+!backend/qweb-server/icons/*.png

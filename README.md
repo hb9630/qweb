@@ -1,6 +1,6 @@
 # qweb
 
-Claude Code 的流式 Web 工作台：对话（stream-json 双向管道）为全宽主角，目录树/编辑器是从标题栏左上（工作目录三件套）派生的一体化浮层（右键全功能文件管理、多 tab 编辑）。Rust 后端（axum/tokio 单二进制，前端全量嵌入）+ React 前端；npm 机制只用于 frontend/，根目录纯 shell 脚本（build.sh / deploy.sh）编排构建与部署。
+AI coding agent 的流式 Web 工作台（当前对接 Claude Code，引擎架构可挂其他 agent）：对话（stream-json 双向管道）为全宽主角，目录树/编辑器是从标题栏左上（工作目录三件套）派生的一体化浮层（右键全功能文件管理、多 tab 编辑）。Rust 后端（axum/tokio 单二进制，前端全量嵌入）+ React 前端；npm 机制只用于 frontend/，根目录纯 shell 脚本（build.sh / deploy.sh）编排构建与部署。
 
 > 2026-11-06 从 `keeper/deploy/qweb` 拆出独立仓库；2026-11-07 后端移植 Rust（Node 版已移除，API/WS 契约经双后端逐字节 diff 验证后切换）。
 

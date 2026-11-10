@@ -7,7 +7,7 @@ import { Suspense, lazy, useCallback, useEffect, useRef, useState } from "react"
 import { toast } from "sonner";
 import { API, fetchHistoryOnce, hashSid, setHashSid } from "./lib/api";
 import { Loader2 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, dispPath } from "@/lib/utils";
 import Explorer from "./Explorer";
 // 编辑器（CodeMirror 全家 ~1.1M）懒加载：浮层默认收起，首次点开文件才拉 chunk
 const Editor = lazy(() => import("./Editor"));
@@ -61,7 +61,9 @@ export default function App() {
   const lastRoot = (() => { try { return localStorage.getItem("qweb.lastRoot"); } catch { return null; } })();
   const cachedHome = (() => { try { return localStorage.getItem("qweb.home"); } catch { return null; } })();
   const userRoot = useRef(!!savedRoot);
-  const [root, setRoot] = useState<string>(savedRoot || lastRoot || cachedHome || "");
+  // root 初值归一：存量记忆（lastRoot 时代 settle 写过反斜杠 transcript cwd）统一回正斜杠
+  const normRoot = (p: string) => (/^[A-Za-z]:\\/.test(p) ? p.replace(/\\/g, "/") : p);
+  const [root, setRoot] = useState<string>(normRoot(savedRoot || lastRoot || cachedHome || ""));
   // 工作目录是否已定：有 savedRoot（人工）或 lastRoot（上次智能默认）即就绪；
   // 全新环境（两者皆无）才等 /api/env + /api/history 智能默认（树区转圈），
   // lastRoot 先扎、后台校对目录变了再切（多数情况一致 = 零闪零等待）
@@ -178,6 +180,8 @@ export default function App() {
               try { localStorage.setItem("qweb.lastRoot", p); } catch {} // 下次打开零等待
               setRoot(p);
               setRootReady(true);
+              pushRecent(p); // 智能默认落根也是工作目录：进历史列表（此前只有人工切换才记，
+              // 默认目录永不在列表——当前目录打勾失效、想切回也找不到）
             };
             // 与 mount 期 refresh() 复用同一 in-flight 请求（history 后端要全量扫
             // projects 目录，是启动链路最慢一环——两处各拉一遍 = 树白多等一轮；
@@ -193,7 +197,9 @@ export default function App() {
                 : [];
               best = all.find((x) => x.title) ?? all[0] ?? null;
             } catch {}
-            settle(best?.cwd || d.home);
+            // transcript cwd 是 CLI 落盘的反斜杠形态（C:\…）——归一成正斜杠再落根：
+            // root/recents/树 fs API/isWinPath 等判定统一走正斜杠（sameDir 才形态兼容）
+            settle(best ? best.cwd.replace(/\\/g, "/") : d.home);
           }
         }
         if (Array.isArray(d.models)) setEnvModels(d.models.map(String));
@@ -361,9 +367,9 @@ export default function App() {
     // 提示走 toast（短暂浮现自动消失）；旧会话消息在官方 transcript，可 resume 续聊
     if (live && live.cwd !== path) {
       newSession(path);
-      toast.success(`工作目录已切换到 ${path}`, { description: "已开启新会话（新 claude 实例）" });
+      toast.success(`工作目录已切换到 ${dispPath(path)}`, { description: "已开启新会话（新 agent 实例）" });
     } else if (live) {
-      toast.info(`工作目录 ${path} 与当前会话一致，继续当前会话`);
+      toast.info(`工作目录 ${dispPath(path)} 与当前会话一致，继续当前会话`);
     }
   };
 

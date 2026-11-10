@@ -14,9 +14,9 @@ try {
   await pg.goto(base + "/");
   await pg.waitForTimeout(2500);
 
-  // 1. 标题栏 cwd chip：win 不折叠 ~（显示 C:/… 绝对形态）
+  // 1. 标题栏 cwd chip：win 不折叠 ~（显示盘符绝对路径；显示层按 OS 分隔符出 \）
   const chip = await pg.locator('button[title^="工作目录："]').first().innerText();
-  /^[A-Za-z]:\//.test(chip) || fail(`标题栏 cwd 应为盘符绝对路径，得到 "${chip}"`);
+  /^[A-Za-z]:[\\/]/.test(chip) || fail(`标题栏 cwd 应为盘符绝对路径，得到 "${chip}"`);
   console.log(`✓ 标题栏 cwd 显示绝对路径（${chip.trim()}，无 ~）`);
 
   // 2. 打开切换工作目录选择器：面包屑 win 形态 =「电脑 / C: / …」
@@ -36,12 +36,12 @@ try {
   drives.length >= 1 || fail(`盘符列表页应列出盘符行，得到 [${rows.join(",")}]`);
   console.log(`✓ 盘符列表页列出：${drives.join(" ")}`);
 
-  // 4. 进入 D:（若在），跨盘选中开新会话 → 会话 cwd = D:/
+  // 4. 进入 D:（若在），跨盘选中开新会话 → 会话 cwd = D:/（会话 cwd 恒正斜杠，仅显示层转 \）
   const target = drives.find(d => d !== "C:") || drives[0];
   await pg.locator(`[role="dialog"] button[title^="进入 ${target}"]`).first().click();
   await pg.waitForTimeout(800);
   const foot = await pg.locator('[role="dialog"] .font-mono').last().innerText();
-  foot.trim().startsWith(target + "/") || fail(`进入盘符 ${target}: 后底部路径应为 ${target}/，得到 "${foot.trim()}"`);
+  foot.trim().startsWith(target + "\\") || fail(`进入盘符 ${target}: 后底部路径应为 ${target}\\，得到 "${foot.trim()}"`);
   console.log(`✓ 跨盘进入 ${foot.trim()}`);
   await pg.getByRole("button", { name: "选这个目录", exact: true }).click();
   await pg.waitForTimeout(1500);

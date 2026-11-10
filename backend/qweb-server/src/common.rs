@@ -11,7 +11,7 @@ pub fn reqwest_probe_client() -> reqwest::Client {
 }
 
 const USAGE: &str = "\
-qweb —— Claude Code Web 壳
+qweb —— AI agent Web 壳（当前对接 Claude Code）
 
 用法: qweb [选项]
 

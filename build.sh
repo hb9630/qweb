@@ -69,7 +69,7 @@ home=$(getent passwd "$user" | cut -d: -f6)
 cat >/tmp/qweb.service.install <<UNIT
 # qweb systemd 单元（build.sh deploy 生成）
 [Unit]
-Description=qweb（Claude Code 流式 Web 工作台）
+Description=qweb（AI agent 流式 Web 工作台）
 After=network-online.target
 Wants=network-online.target
 

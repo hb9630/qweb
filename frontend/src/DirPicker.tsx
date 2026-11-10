@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { API } from "./lib/api";
 import { Check, ChevronUp, Folder, HardDrive, Loader2 } from "lucide-react";
-import { cn, sameDir } from "@/lib/utils";
+import { cn, sameDir, dispPath, pathSep } from "@/lib/utils";
 
 const isWinPath = (s: string) => /^[A-Za-z]:\//.test(s);
 
@@ -108,7 +108,7 @@ export default function DirPicker({ home, current, onPick, onClose }: {
       <div className="flex shrink-0 items-center gap-1 border-b border-border/60 px-2 py-1.5">
         <button
           className={cn("shrink-0 rounded p-0.5 hover:bg-accent", !up && "pointer-events-none opacity-30")}
-          title={up ? `上一级：${up}` : "已是根目录"}
+          title={up ? `上一级：${dispPath(up)}` : "已是根目录"}
           onClick={() => up && setBrowse(up)}>
           <ChevronUp className="h-3.5 w-3.5" />
         </button>
@@ -118,9 +118,9 @@ export default function DirPicker({ home, current, onPick, onClose }: {
               key={path}
               className={cn("shrink-0 rounded px-1 py-0.5 hover:bg-accent",
                 i === crumbs.length - 1 ? "text-foreground" : "text-muted-foreground")}
-              title={path}
+              title={dispPath(path)}
               onClick={() => setBrowse(path)}>
-              {label}{i < crumbs.length - 1 && <span className="pl-0.5 opacity-40">/</span>}
+              {label}{i < crumbs.length - 1 && <span className="pl-0.5 opacity-40">{pathSep()}</span>}
             </button>
           ))}
         </div>
@@ -142,7 +142,7 @@ export default function DirPicker({ home, current, onPick, onClose }: {
           <div key={d} className="group/row flex items-center">
             <button
               className="flex min-w-0 flex-1 items-center gap-1.5 rounded-sm px-2 py-1 text-left hover:bg-accent"
-              title={`进入 ${full}`}
+              title={`进入 ${dispPath(full)}`}
               onClick={() => setBrowse(full)}>
               {drives
                 ? <HardDrive className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
@@ -151,7 +151,7 @@ export default function DirPicker({ home, current, onPick, onClose }: {
             </button>
             <button
               className="mr-1 hidden shrink-0 rounded p-0.5 text-primary hover:bg-accent group-hover/row:block"
-              title={`选这个目录：${full}`}
+              title={`选这个目录：${dispPath(full)}`}
               onClick={() => onPick(full)}>
               <Check className="h-3.5 w-3.5" />
             </button>
@@ -165,8 +165,8 @@ export default function DirPicker({ home, current, onPick, onClose }: {
       <div className="flex shrink-0 items-center gap-2 border-t border-border/60 bg-background/60 px-2 py-1.5">
         <span
           className="min-w-0 flex-1 truncate font-mono text-[0.6875rem] text-muted-foreground"
-          title={sameDir(browse, current) ? `${browse}（当前工作目录）` : `选定工作目录：${browse}`}>
-          {sameDir(browse, current) ? browse + "（当前）" : browse}
+          title={sameDir(browse, current) ? `${dispPath(browse)}（当前工作目录）` : `选定工作目录：${dispPath(browse)}`}>
+          {sameDir(browse, current) ? dispPath(browse) + "（当前）" : dispPath(browse)}
         </span>
         <button
           className={cn("flex shrink-0 items-center gap-1 rounded-md bg-primary px-2.5 py-1 font-medium text-primary-foreground hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-40")}

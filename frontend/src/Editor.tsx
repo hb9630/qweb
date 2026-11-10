@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { API } from "./lib/api";
 import { FileText, Save, X, Circle, Image as ImageIcon, Eye, Pencil, ZoomIn, ZoomOut, RotateCcw, ListX, TriangleAlert } from "lucide-react";
 import { Streamdown } from "streamdown";
-import { cn } from "@/lib/utils";
+import { cn, dispPath } from "@/lib/utils";
 import { useFsEvent, watchDir } from "@/lib/fswatch";
 import CodeField from "./CodeField";
 
@@ -419,7 +419,7 @@ export default function Editor({
                 onClick={() => setActive(t.path)}
                 onDoubleClick={() => setPreview((p) => (p === t.path ? null : p))}
                 onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setCtx({ x: e.clientX, y: e.clientY, path: t.path }); }}
-                title={t.path === preview ? "预览标签（双击钉住 / 停留超 1s 后自动转正）" : t.path}>
+                title={t.path === preview ? "预览标签（双击钉住 / 停留超 1s 后自动转正）" : dispPath(t.path)}>
                 {/* 激活指示条（VSCode 式顶部主色边）：绝对定位不占布局，切换 tab 无跳动 */}
                 {active === t.path && <span className="absolute inset-x-0 top-0 h-[2.5px] rounded-b-sm bg-primary" />}
                 <Icon className={cn("h-3 w-3 shrink-0", active === t.path ? "text-primary" : "opacity-70")} />
@@ -551,7 +551,7 @@ export default function Editor({
       {/* 状态栏：路径/大小/未保存/错误 */}
       {cur && (
         <div className="flex h-6 shrink-0 items-center gap-2 border-t border-border/40 bg-card/30 px-3 text-[0.625rem] text-muted-foreground">
-          <span className="min-w-0 truncate font-mono">{cur.path}</span>
+          <span className="min-w-0 truncate font-mono" title={dispPath(cur.path)}>{dispPath(cur.path)}</span>
           <span className="shrink-0">{fmtSize(cur.size)}</span>
           {dirty && <span className="shrink-0 text-amber-500">未保存</span>}
           {cur.error && <span className="ml-auto max-w-[50%] shrink-0 truncate text-destructive" title={cur.error}>{cur.error}</span>}
