@@ -9,3 +9,4 @@ target/
 /qweb-desktop.exe
 backend/ccweb-server/gen/
 山水长卷.html
+*.png

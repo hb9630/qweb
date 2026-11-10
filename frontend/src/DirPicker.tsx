@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { API } from "./lib/api";
 import { Check, ChevronUp, Folder, HardDrive, Loader2 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, sameDir } from "@/lib/utils";
 
 const isWinPath = (s: string) => /^[A-Za-z]:\//.test(s);
 
@@ -165,8 +165,8 @@ export default function DirPicker({ home, current, onPick, onClose }: {
       <div className="flex shrink-0 items-center gap-2 border-t border-border/60 bg-background/60 px-2 py-1.5">
         <span
           className="min-w-0 flex-1 truncate font-mono text-[0.6875rem] text-muted-foreground"
-          title={browse === current ? `${browse}（当前工作目录）` : `选定工作目录：${browse}`}>
-          {browse === current ? browse + "（当前）" : browse}
+          title={sameDir(browse, current) ? `${browse}（当前工作目录）` : `选定工作目录：${browse}`}>
+          {sameDir(browse, current) ? browse + "（当前）" : browse}
         </span>
         <button
           className={cn("flex shrink-0 items-center gap-1 rounded-md bg-primary px-2.5 py-1 font-medium text-primary-foreground hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-40")}
