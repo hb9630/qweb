@@ -196,7 +196,13 @@ async fn dispatch(State(app): State<Arc<App>>, req: Request) -> Response<Body> {
     }
 
     // ---- 静态兜底 ----
-    statics::serve(&pathname)
+    // Accept-Encoding 含 gzip：assets/ 优先回预压缩 .gz 副本（见 statics.rs）
+    let accept_gzip = parts
+        .headers
+        .get(HeaderName::from_static("accept-encoding"))
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.contains("gzip"));
+    statics::serve(&pathname, accept_gzip)
 }
 
 /// 后台任务：空闲会话回收（无 WS 客户端且 20 分钟无事件 → kill，防进程堆积）

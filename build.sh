@@ -26,6 +26,9 @@ fi
 # ---------- 构建（= make；产物落项目根目录） ----------
 echo "==> 1/2 前端构建（frontend/，vite）"
 (cd "$root/frontend" && npm run build)
+# 静态资源预压缩：gzip -9 副本与原件并存（同入 embed），Rust 端按 Accept-Encoding
+# 协商优先回 .gz（构建期压好 = 零运行时 CPU；首屏 index chunk 传输量 ~1/4）
+find "$root/frontend/dist/assets" -type f \( -name '*.js' -o -name '*.css' -o -name '*.svg' \) -exec gzip -9k {} \;
 
 if [ "$mode" = "build" ] && [ "${QWEB_NO_RUST:-}" = "1" ]; then
   echo "==> 2/2 跳过 Rust 构建（QWEB_NO_RUST=1）"

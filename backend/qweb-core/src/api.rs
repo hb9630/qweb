@@ -76,10 +76,10 @@ pub async fn sessions(app: &App, method: &Method, rest: &str, body: Option<Body>
             return json_resp(StatusCode::NOT_FOUND, json!({ "error": "会话不存在" }));
         }
         // 未匹配 → 静态兜底（Node 同款：regex 不命中落到静态分支）
-        return crate::statics::serve("/index.html");
+        return crate::statics::serve("/index.html", false); // index.html 无预压缩副本（no-cache 小文件）
     }
     // 其他方法（PUT /api/sessions 等）→ Node 落静态
-    crate::statics::serve("/index.html")
+    crate::statics::serve("/index.html", false)
 }
 
 /// Node regex [\w-]+：字母数字下划线连字符

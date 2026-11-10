@@ -30,8 +30,10 @@ fn static_mime(rel: &str) -> &'static str {
     }
 }
 
-/// 静态分发（server.mjs:653-667）：pathname 已是 strip_base 后的值
-pub fn serve(pathname: &str) -> Response<Body> {
+/// 静态分发（server.mjs:653-667）：pathname 已是 strip_base 后的值。
+/// accept_gzip：客户端 Accept-Encoding 含 gzip——assets/ 资源优先回构建期预压缩的
+/// .gz 副本（Content-Encoding: gzip；Vary 防中间层缓存错配），无副本/不支持则原件
+pub fn serve(pathname: &str, accept_gzip: bool) -> Response<Body> {
     // decodeURIComponent：坏 % 序列 Node 挂连接 → 此处 400（偏差清单）
     let decoded = match crate::util::js_decode_uri_component(pathname) {
         Ok(d) => d,
@@ -45,11 +47,28 @@ pub fn serve(pathname: &str) -> Response<Body> {
         rel = appended.as_str();
     }
     let rel = rel.strip_prefix('/').unwrap_or(rel);
-    let cache = if rel.starts_with("assets/") {
+    let is_asset = rel.starts_with("assets/");
+    let cache = if is_asset {
         "public, max-age=31536000, immutable"
     } else {
         "no-cache"
     };
+    // gzip 协商仅对真实存在的 assets/ 资源（SPA fallback 到 index.html 不走压缩副本）
+    if accept_gzip && is_asset {
+        if let Some(gz) = Dist::get(&format!("{rel}.gz")) {
+            return (
+                StatusCode::OK,
+                [
+                    (header::CONTENT_TYPE, static_mime(rel)),
+                    (header::CACHE_CONTROL, cache),
+                    (header::CONTENT_ENCODING, "gzip"),
+                    (header::VARY, "Accept-Encoding"),
+                ],
+                gz.data.into_owned(),
+            )
+                .into_response();
+        }
+    }
     let mut data = Dist::get(rel);
     if data.is_none() && rel != "index.html" {
         data = Dist::get("index.html"); // SPA fallback
@@ -65,6 +84,8 @@ pub fn serve(pathname: &str) -> Response<Body> {
         [
             (header::CONTENT_TYPE, static_mime(rel)),
             (header::CACHE_CONTROL, cache),
+            // 资源可能按 Accept-Encoding 变体返回（gz/原件）：标记 Vary 防共享缓存错配
+            (header::VARY, "Accept-Encoding"),
         ],
         bytes.data.into_owned(),
     )
