@@ -756,6 +756,9 @@ export default function ChatPanel({
   }, [models]);
   // 模式/模型弹出菜单（锚定输入框左下）
   const [menu, setMenu] = useState<null | "mode" | "model">(null);
+  // 历史态续聊的 resume 等待中（POST /sessions 往返，广域网明显）：底部状态行转圈；
+  // 成功升级 live/失败都经 promise finally 落地清除（面板不重挂，state 存活）
+  const [resuming, setResuming] = useState(false);
   const [modelInput, setModelInput] = useState("");
   // 标题栏左上三件套的弹出层：▾ 历史工作目录 / 换目录选择器（互斥，同时只开一个）
   const [hdrMenu, setHdrMenu] = useState<null | "recents" | "picker">(null);
@@ -1003,8 +1006,14 @@ export default function ChatPanel({
 
   const send = useCallback(({ text }: { text: string }) => {
     if (!text.trim() && imgs.length === 0) return;
-    // 历史回放态：先恢复进程（--resume），App 升级为 live 后再发
-    if (!live) { onResume?.(text); return; }
+    // 历史回放态：先恢复进程（--resume），App 升级为 live 后再发。
+    // 等待期状态行转圈（输入文本保留——失败不丢）；resolve/reject 都清等待态
+    if (!live) {
+      setResuming(true);
+      // catch 兜住网络异常的 reject（失败提示由 App.resumeChat 的 toast 负责）
+      Promise.resolve(onResume?.(text)).catch(() => {}).finally(() => setResuming(false));
+      return;
+    }
     if (!s.alive) { dispatch({ t: "note", text: "进程已退出，请新建会话" }); return; }
     if (!s.connected) { dispatch({ t: "note", text: "连接断开（自动重连中），稍候再发" }); return; }
     const t = text.trim();
@@ -1365,10 +1374,11 @@ export default function ChatPanel({
           {s.blocks.slice(histStart).map((b) => <BlockView key={b.bid} b={b} canAct={live && s.connected && s.alive} onRespond={respondPerm} onFormRespond={respondForm} onFormSkip={skipForm} />)}
           {/* 底部状态行常驻占位（min-h-8 = 图标行满高）：busy 结束只隐去内容不收行，消息列表不跳动 */}
           <div className="flex min-h-8 items-center gap-2 px-1 text-xs text-muted-foreground">
-            {s.busy && (
+            {(s.busy || resuming) && (
               <>
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                {s.blocks.some((b: any) => (b.k === "ask" || b.k === "form") && !b.done)
+                {!s.busy && resuming ? "正在恢复会话进程…"
+                  : s.blocks.some((b: any) => (b.k === "ask" || b.k === "form") && !b.done)
                   ? s.blocks.some((b: any) => b.k === "form" && !b.done) ? "等待你的回答…" : "等待授权…"
                   : s.blocks.some((b: any) => b.live)
                     ? "回复中…"

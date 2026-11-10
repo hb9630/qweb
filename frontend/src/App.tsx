@@ -373,15 +373,24 @@ export default function App() {
     }
   };
 
+  // 历史载入中：/api/history 要拉全量 transcript，广域网往返明显——点选即清当前会话
+  // 切到转圈（否则等待期界面仍停在旧会话，像"点了没反应"）；失败 toast，可重新点选
+  const [histLoad, setHistLoad] = useState<string | null>(null);
   const openHistory = async (id: string, cwd: string) => {
+    setLive(null);
+    setHistEv(null);
+    setHistLoad(id);
     try {
       const r = await fetch(`${API}/history/${id}`);
       const d = await r.json();
-      if (!r.ok) return;
+      if (!r.ok) throw new Error(String(r.status));
       // 历史 id 即官方 session_id（transcript 文件名），直接用于 --resume
-      setLive(null);
       setHistEv({ id, cwd, events: d.events, resumeSid: id, model: d.model ?? null });
-    } catch {}
+    } catch {
+      toast.error("载入历史会话失败", { description: "网络异常或会话已不存在，可重试" });
+    } finally {
+      setHistLoad(null);
+    }
   };
 
   // 历史会话继续对话：--resume 恢复进程，历史消息保持显示，首条输入自动发出。
@@ -389,16 +398,21 @@ export default function App() {
   // 消息列表原地续聊（重挂会整列表重建 + 滚动重置，看起来"从头到尾重刷"）
   const resumeChat = async (text: string) => {
     if (!histEv) return;
-    const r = await fetch(`${API}/sessions`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ cwd: histEv.cwd, resume: histEv.resumeSid }),
-    });
-    const d = await r.json();
-    if (!r.ok) return;
-    setPending({ events: histEv.events, text, model: histEv.model ?? null });
-    setHistEv(null);
-    setLive({ id: d.id, cwd: histEv.cwd, claudeSid: d.claudeSid ?? histEv.resumeSid, engine: d.engine ?? "claude" });
-    refresh();
+    try {
+      const r = await fetch(`${API}/sessions`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cwd: histEv.cwd, resume: histEv.resumeSid }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(String(r.status));
+      setPending({ events: histEv.events, text, model: histEv.model ?? null });
+      setHistEv(null);
+      setLive({ id: d.id, cwd: histEv.cwd, claudeSid: d.claudeSid ?? histEv.resumeSid, engine: d.engine ?? "claude" });
+      refresh();
+    } catch {
+      // 输入文本仍留在输入框（send 未清），失败可改可重发
+      toast.error("恢复会话失败", { description: "网络异常或进程启动失败，可重试" });
+    }
   };
 
   // ---- 浮层几何（与 return 里的渲染同源）：树宽/编辑器宽均 clamp 进视口，
@@ -428,6 +442,12 @@ export default function App() {
       <ChatPanel key={live.claudeSid ?? live.id} session={live} initialEvents={pending?.events} pendingText={pending?.text} initModel={pending?.model ?? undefined} {...chatProps} />
     ) : histEv ? (
       <ChatPanel key={histEv.id} historyEvents={histEv} initModel={histEv.model ?? undefined} {...chatProps} />
+    ) : histLoad ? (
+      // 历史载入窗口（openHistory 的 fetch 往返）：消息区转圈（与"正在恢复会话"同款样式）
+      <div className="flex h-full flex-col items-center justify-center gap-2 text-xs text-muted-foreground">
+        <Loader2 className="h-4 w-4 animate-spin" />
+        正在载入历史会话…
+      </div>
     ) : restoring ? (
       <div className="flex h-full flex-col items-center justify-center gap-2 text-xs text-muted-foreground">
         <Loader2 className="h-4 w-4 animate-spin" />
